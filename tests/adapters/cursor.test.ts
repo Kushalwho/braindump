@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -18,23 +18,30 @@ describe("CursorAdapter", () => {
 
   let adapter: CursorAdapter;
   let tmpRoot: string;
-  let originalAppData: string | undefined;
   let workspaceStorageDir: string;
   let modernSessionId: string;
   let legacySessionId: string;
 
+  function getWorkspaceStoragePath(homeDir: string): string {
+    if (process.platform === "darwin") {
+      return path.join(homeDir, "Library", "Application Support", "Cursor", "User", "workspaceStorage");
+    }
+    if (process.platform === "linux") {
+      return path.join(homeDir, ".config", "Cursor", "User", "workspaceStorage");
+    }
+    // Windows
+    return path.join(homeDir, "AppData", "Roaming", "Cursor", "User", "workspaceStorage");
+  }
+
   beforeEach(() => {
     const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf-8")) as CursorFixture;
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentrelay-cursor-"));
-    originalAppData = process.env.APPDATA;
-    process.env.APPDATA = tmpRoot;
 
-    workspaceStorageDir = path.join(
-      tmpRoot,
-      "Cursor",
-      "User",
-      "workspaceStorage",
-    );
+    vi.spyOn(os, "homedir").mockReturnValue(tmpRoot);
+    // Also set APPDATA for Windows path resolution inside the adapter
+    process.env.APPDATA = path.join(tmpRoot, "AppData", "Roaming");
+
+    workspaceStorageDir = getWorkspaceStoragePath(tmpRoot);
     fs.mkdirSync(workspaceStorageDir, { recursive: true });
 
     const modernWorkspaceHash = "ws-modern";
@@ -78,11 +85,7 @@ describe("CursorAdapter", () => {
   });
 
   afterEach(() => {
-    if (originalAppData === undefined) {
-      delete process.env.APPDATA;
-    } else {
-      process.env.APPDATA = originalAppData;
-    }
+    vi.restoreAllMocks();
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
@@ -93,7 +96,8 @@ describe("CursorAdapter", () => {
     });
 
     it("should return false when directory does not exist", async () => {
-      process.env.APPDATA = path.join(os.tmpdir(), `missing-appdata-${Date.now()}`);
+      const missingHome = path.join(os.tmpdir(), `missing-home-${Date.now()}`);
+      vi.spyOn(os, "homedir").mockReturnValue(missingHome);
       const emptyAdapter = new CursorAdapter();
       const detected = await emptyAdapter.detect();
       expect(detected).toBe(false);
