@@ -98,6 +98,7 @@ describe("CursorAdapter", () => {
     it("should return false when directory does not exist", async () => {
       const missingHome = path.join(os.tmpdir(), `missing-home-${Date.now()}`);
       vi.spyOn(os, "homedir").mockReturnValue(missingHome);
+      process.env.APPDATA = path.join(missingHome, "AppData", "Roaming");
       const emptyAdapter = new CursorAdapter();
       const detected = await emptyAdapter.detect();
       expect(detected).toBe(false);

@@ -110,10 +110,33 @@ export interface ProviderOptions {
 
 // === Watcher ===
 
+export interface WatcherEvent {
+  type: "session-update" | "new-session" | "rate-limit" | "idle";
+  agentId: AgentId;
+  sessionId?: string;
+  timestamp: string;
+  details?: string;
+}
+
+export interface WatcherOptions {
+  agents?: AgentId[];
+  interval?: number;
+  projectPath?: string;
+  onEvent?: (event: WatcherEvent) => void;
+}
+
 export interface WatcherState {
   timestamp: string;
-  agents: string[];
-  activeSessions: Record<string, number>;
+  agents: AgentId[];
+  activeSessions: Record<
+    string,
+    {
+      messageCount: number;
+      lastCheckedAt: string;
+      lastChangedAt?: string;
+    }
+  >;
+  running: boolean;
 }
 
 // === CLI ===
