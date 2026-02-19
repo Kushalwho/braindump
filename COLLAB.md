@@ -4,15 +4,15 @@
 
 | Who | Branch | Focus Area |
 |-----|--------|------------|
-| **You (Kushal)** | `feat/core-engine` | Compression, prompt builder, token estimator, CLI wiring |
-| **Friend** | `feat/data-layer` | Claude Code adapter, project context, providers (file + clipboard) |
+| **Prateek** | `feat/core-engine` | Compression, prompt builder, token estimator, CLI wiring |
+| **Kushal** | `feat/data-layer` | Claude Code adapter, project context, providers (file + clipboard) |
 
 ## The Contract: `CapturedSession`
 
 Both sides meet at the `CapturedSession` interface in `src/types/index.ts`. This is the handshake:
 
-- **Friend** builds adapters that **produce** `CapturedSession` objects from raw agent data
-- **Kushal** builds the engine that **consumes** `CapturedSession` objects and outputs RESUME.md
+- **Kushal** builds adapters that **produce** `CapturedSession` objects from raw agent data
+- **Prateek** builds the engine that **consumes** `CapturedSession` objects and outputs RESUME.md
 
 Neither side needs the other's code to work. Use test fixtures to mock the interface.
 
@@ -20,8 +20,8 @@ Neither side needs the other's code to work. Use test fixtures to mock the inter
 
 ```bash
 # Create your feature branch
-git checkout -b feat/core-engine   # (Kushal)
-git checkout -b feat/data-layer    # (Friend)
+git checkout -b feat/core-engine   # (Prateek)
+git checkout -b feat/data-layer    # (Kushal)
 
 # Work, commit frequently
 git add <files> && git commit -m "description"
@@ -42,13 +42,13 @@ git pull origin main --rebase
 
 These files are **shared** — coordinate before editing:
 - `src/types/index.ts` — if you need to change an interface, tell the other person
-- `src/cli/index.ts` — Kushal owns this, friend should not edit
+- `src/cli/index.ts` — Prateek owns this, Kushal should not edit
 - `package.json` — if you need a new dependency, add it and tell the other person
 
 These files are **owned** — no conflicts possible:
 
-| Kushal's files (don't touch) | Friend's files (don't touch) |
-|------------------------------|------------------------------|
+| Prateek's files (don't touch) | Kushal's files (don't touch) |
+|-------------------------------|------------------------------|
 | `src/core/compression.ts` | `src/adapters/claude-code/adapter.ts` |
 | `src/core/token-estimator.ts` | `src/adapters/index.ts` |
 | `src/core/prompt-builder.ts` | `src/core/project-context.ts` |
@@ -67,7 +67,7 @@ When you finish a chunk of work:
 
 ## Testing Without the Other Half
 
-**Kushal (core engine):** Create a mock `CapturedSession` in your tests:
+**Prateek (core engine):** Create a mock `CapturedSession` in your tests:
 ```typescript
 const mockSession: CapturedSession = {
   version: "1.0",
@@ -83,4 +83,4 @@ const mockSession: CapturedSession = {
 };
 ```
 
-**Friend (data layer):** Test your adapter by pointing it at fixture files in `tests/fixtures/`. Create sample JSONL files that mimic real Claude Code sessions.
+**Kushal (data layer):** Test your adapter by pointing it at fixture files in `tests/fixtures/`. Create sample JSONL files that mimic real Claude Code sessions.

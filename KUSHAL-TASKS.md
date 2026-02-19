@@ -1,4 +1,4 @@
-# AgentRelay — Friend's Task Sheet
+# AgentRelay — Kushal's Task Sheet
 
 ## Your Branch: `feat/data-layer`
 
@@ -145,4 +145,4 @@ git push -u origin feat/data-layer
 gh pr create --base main --title "feat: data layer - adapter, context, providers"
 ```
 
-Tell Kushal so he can review and merge before wiring the CLI.
+Tell Prateek so he can review and merge before wiring the CLI.
