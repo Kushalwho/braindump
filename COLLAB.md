@@ -1,86 +1,109 @@
 # AgentRelay — Collaboration Guide
 
+## Current Status (Updated Feb 19, 2026)
+
+MVP pipeline is **working end-to-end**. Both PRs merged to main.
+
+| Milestone | Status |
+|-----------|--------|
+| PR #1 — Core engine (Prateek) | Merged |
+| PR #2 — Data layer (Kushal) | Merged |
+| End-to-end `handoff` command | Working |
+| CI (GitHub Actions) | Running on Node 18/20/22 |
+| Tests | 29 passing (22 core + 7 adapter) |
+
+### What works now
+
+```bash
+npx tsx src/cli/index.ts detect          # detects Claude Code
+npx tsx src/cli/index.ts info            # shows agent registry
+npx tsx src/cli/index.ts list            # lists real sessions
+npx tsx src/cli/index.ts handoff         # full pipeline, writes .handoff/RESUME.md + clipboard
+```
+
+### Bugs found during testing
+
+1. **No project context in RESUME.md** — git branch shows "unknown", no directory tree, no CLAUDE.md contents. `extractProjectContext()` is implemented but never called during capture/handoff.
+2. **Task description is garbage** — grabs the first user message blindly. If it's an interrupted message or "yes", the task description is useless.
+3. **Decisions and blockers always empty** — adapter sets `decisions: []` and `blockers: []`. Nobody extracts these from conversation content.
+
+---
+
 ## Team
 
-| Who | Branch | Focus Area |
-|-----|--------|------------|
-| **Prateek** | `feat/core-engine` | Compression, prompt builder, token estimator, CLI wiring |
-| **Kushal** | `feat/data-layer` | Claude Code adapter, project context, providers (file + clipboard) |
+| Who | Role | Next Branch |
+|-----|------|-------------|
+| **Prateek** | Core engine + CLI | `feat/enrich-pipeline` |
+| **Kushal** | Data layer + smart extraction | `feat/smart-extraction` |
 
 ## The Contract: `CapturedSession`
 
-Both sides meet at the `CapturedSession` interface in `src/types/index.ts`. This is the handshake:
+Both sides meet at the `CapturedSession` interface in `src/types/index.ts`.
 
 - **Kushal** builds adapters that **produce** `CapturedSession` objects from raw agent data
 - **Prateek** builds the engine that **consumes** `CapturedSession` objects and outputs RESUME.md
 
-Neither side needs the other's code to work. Use test fixtures to mock the interface.
-
 ## Branch Workflow
 
 ```bash
+# Always start from latest main
+git checkout main
+git pull origin main
+
 # Create your feature branch
-git checkout -b feat/core-engine   # (Prateek)
-git checkout -b feat/data-layer    # (Kushal)
+git checkout -b feat/smart-extraction   # (Kushal)
+git checkout -b feat/enrich-pipeline    # (Prateek)
 
 # Work, commit frequently
 git add <files> && git commit -m "description"
 
 # Push your branch
-git push -u origin feat/core-engine
-git push -u origin feat/data-layer
+git push -u origin feat/smart-extraction
+git push -u origin feat/enrich-pipeline
 
-# When ready, create a PR to main
-gh pr create --base main --title "Add core engine" --body "..."
+# Create PR to main
+gh pr create --base main --title "feat: description"
 
-# Before merging the second PR, rebase on main
-git checkout feat/data-layer
+# Before merging second PR, rebase on main
 git pull origin main --rebase
 ```
 
-## Avoiding Conflicts
+## File Ownership (Round 2)
 
 These files are **shared** — coordinate before editing:
 - `src/types/index.ts` — if you need to change an interface, tell the other person
-- `src/cli/index.ts` — Prateek owns this, Kushal should not edit
 - `package.json` — if you need a new dependency, add it and tell the other person
-
-These files are **owned** — no conflicts possible:
 
 | Prateek's files (don't touch) | Kushal's files (don't touch) |
 |-------------------------------|------------------------------|
 | `src/core/compression.ts` | `src/adapters/claude-code/adapter.ts` |
-| `src/core/token-estimator.ts` | `src/adapters/index.ts` |
-| `src/core/prompt-builder.ts` | `src/core/project-context.ts` |
-| `src/cli/index.ts` | `src/providers/file-provider.ts` |
-| `tests/core/*` | `src/providers/clipboard-provider.ts` |
-| `tests/e2e/*` | `src/providers/index.ts` |
-| | `tests/adapters/claude-code.test.ts` |
-| | `tests/fixtures/*` |
+| `src/core/token-estimator.ts` | `src/core/project-context.ts` |
+| `src/core/prompt-builder.ts` | `src/core/conversation-analyzer.ts` (new) |
+| `src/cli/index.ts` | `tests/adapters/claude-code.test.ts` |
+| `tests/core/*` | `tests/fixtures/*` |
+| `tests/e2e/*` | |
 
-## Communication
+## How to Test
 
-When you finish a chunk of work:
-1. Push your branch
-2. Tell the other person what you changed
-3. If you modified `src/types/index.ts`, flag it explicitly
+```bash
+# Pull latest
+git pull origin main
+npm install
 
-## Testing Without the Other Half
+# Run all tests
+npm test
 
-**Prateek (core engine):** Create a mock `CapturedSession` in your tests:
-```typescript
-const mockSession: CapturedSession = {
-  version: "1.0",
-  source: "claude-code",
-  capturedAt: new Date().toISOString(),
-  sessionId: "test-123",
-  project: { path: "/home/user/my-app" },
-  conversation: { messageCount: 5, estimatedTokens: 2000, messages: [...] },
-  filesChanged: [{ path: "src/index.ts", changeType: "modified", diff: "..." }],
-  decisions: ["Use Express over Fastify"],
-  blockers: ["OAuth token refresh failing"],
-  task: { description: "Build REST API", completed: ["Setup"], remaining: ["Auth"], blockers: [] },
-};
+# Smoke test all commands
+npx tsx src/cli/index.ts detect
+npx tsx src/cli/index.ts info
+npx tsx src/cli/index.ts list
+npx tsx src/cli/index.ts handoff --source claude-code
+npx tsx src/cli/index.ts handoff --source claude-code --tokens 5000
+
+# Check output
+cat .handoff/RESUME.md
+
+# Test built version
+npm run build
+node dist/cli/index.js detect
 ```
-
-**Kushal (data layer):** Test your adapter by pointing it at fixture files in `tests/fixtures/`. Create sample JSONL files that mimic real Claude Code sessions.

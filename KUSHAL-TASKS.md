@@ -1,148 +1,233 @@
-# AgentRelay — Kushal's Task Sheet
+# AgentRelay — Kushal's Task Sheet (Round 2)
 
-## Your Branch: `feat/data-layer`
+## Status
+
+Your Round 1 work is merged (PR #2). The full pipeline works end-to-end now — `agentrelay handoff` captures from Claude Code, compresses, and generates RESUME.md.
+
+But we found 3 bugs during real testing. Your Round 2 tasks fix them.
+
+## Your Branch: `feat/smart-extraction`
 
 ```bash
-git clone https://github.com/Kushalwho/agentrelay.git
-cd agentrelay
+git checkout main
+git pull origin main
 npm install
-git checkout -b feat/data-layer
+git checkout -b feat/smart-extraction
 ```
-
-Read `AGENTRELAY-PRD.md` for full context. Read `COLLAB.md` for coordination rules.
 
 ---
 
-## Your Scope
+## Context: What's wrong
 
-You own the **data layer** — everything that reads raw agent data and produces the universal `CapturedSession` format, plus delivering the final output to file/clipboard.
+We ran `agentrelay handoff` on a real Claude Code session. Output issues:
+
+1. **Git branch shows "unknown"** — `extractProjectContext()` exists but is never called during capture. The session's `project` field only has `path` and `name`, no git info.
+
+2. **Task description is junk** — the adapter grabs the first user message as the task description. But the first message in our session was `"[Request interrupted by user for tool use]"`. Useless.
+
+3. **Decisions and blockers are always `[]`** — nobody scans the conversation to extract things like "I'll use Express instead of Fastify" or "Error: OAuth token refresh failed".
+
+---
 
 ## Tasks (in order)
 
-### Task 1: Claude Code Adapter — `detect()` and `listSessions()`
+### Task 1: Wire `extractProjectContext()` into the adapter's `capture()`
 
 **File:** `src/adapters/claude-code/adapter.ts`
 
-Implement:
-- `detect()` — Check if `~/.claude/projects/` exists and has `.jsonl` files. Return `true`/`false`.
-- `listSessions(projectPath?)` — Scan `~/.claude/projects/` for session files. If `projectPath` is given, convert it to the hash format (replace `/` with `-`) and look in that subfolder. Return `SessionInfo[]` sorted by most recent.
-
-Key details:
-- Path hash: `/home/user/my-project` becomes `-home-user-my-project`
-- Each `.jsonl` file = one session. Filename is `<session-uuid>.jsonl`
-- Read first line for timestamp + preview, last line for `lastActiveAt`
-- Count lines for `messageCount`
-- Use `fs` and `path` modules, no external deps needed
-- Use `glob` package (already in deps) to find `.jsonl` files
-
-### Task 2: Claude Code Adapter — `capture()` and `captureLatest()`
-
-**File:** `src/adapters/claude-code/adapter.ts`
-
-Implement:
-- `capture(sessionId)` — Find the session file, parse JSONL line by line, build a `CapturedSession`
-- `captureLatest(projectPath?)` — Call `listSessions()`, take the first result, call `capture()`
-
-JSONL parsing rules (see PRD Section 9.2):
-- Each line is one JSON object with `type`, `message`, and `timestamp`
-- Extract text from `message.content` blocks where `type === "text"`
-- Extract tool names from blocks where `type === "tool_use"`
-- Extract file changes from `Write`/`Edit` tool_use blocks (`input.path` and `input.content`)
-- Extract token counts from `message.usage`
-- Skip malformed lines (wrap JSON.parse in try/catch)
-- Handle incomplete last line (active sessions)
-
-For `task`, `decisions`, and `blockers` fields — set reasonable defaults:
+Right now `capture()` builds the session with a bare project object:
 ```typescript
-task: {
-  description: messages[0]?.content || "Unknown task",  // first user message
-  completed: [],
-  remaining: [],
-  inProgress: messages[messages.length - 1]?.content?.substring(0, 200),
-  blockers: [],
+project: {
+  path: inferredProjectPath,
+  name: path.basename(inferredProjectPath),
 }
 ```
 
-### Task 3: Adapter Registry — `detectAgents()` and `autoDetectSource()`
+Fix: import and call `extractProjectContext()` from `../../core/project-context.js`, then spread its result into the session's project field:
 
-**File:** `src/adapters/index.ts`
+```typescript
+import { extractProjectContext } from "../../core/project-context.js";
 
-Implement:
-- `detectAgents()` — Run `detect()` on each adapter, collect results as `DetectResult[]`
-- `autoDetectSource(projectPath?)` — Find the adapter whose most recent session is newest
+// Inside capture(), after building the session:
+const projectContext = await extractProjectContext(inferredProjectPath);
+session.project = { ...session.project, ...projectContext };
+```
 
-For MVP, only Claude Code adapter will return `true` from `detect()`. Cursor and Codex stubs will return `false`.
+This fills in `gitBranch`, `gitStatus`, `gitLog`, `structure`, and `memoryFileContents`.
 
-### Task 4: Project Context Extractor
+**Test:** After this change, run `npx tsx src/cli/index.ts handoff --source claude-code` and check that `.handoff/RESUME.md` shows the real git branch instead of "unknown".
 
-**File:** `src/core/project-context.ts`
+### Task 2: Build a conversation analyzer
 
-Implement `extractProjectContext(projectPath)`:
-- `gitBranch` — Run `git branch --show-current` in the project dir
-- `gitStatus` — Run `git status --short`
-- `gitLog` — Run `git log --oneline -10`, split into string array
-- `structure` — Run `find . -maxdepth 2 -not -path '*/node_modules/*' -not -path '*/.git/*'` or use a tree-like approach. Cap at 40 lines.
-- `name` — Try reading `package.json` name, fallback to directory basename
-- `memoryFileContents` — Read `CLAUDE.md` and/or `.claude/CLAUDE.md` if they exist. Truncate at 2000 chars.
+**File:** `src/core/conversation-analyzer.ts` (create new file)
 
-Use `child_process.execSync` for git commands. Wrap in try/catch — all fields are optional.
+Create a module that scans conversation messages and extracts structured info.
 
-### Task 5: File Provider
+```typescript
+import type { ConversationMessage } from "../types/index.js";
 
-**File:** `src/providers/file-provider.ts`
+export interface ConversationAnalysis {
+  taskDescription: string;
+  decisions: string[];
+  blockers: string[];
+  completedSteps: string[];
+}
 
-Implement `deliver(content, options?)`:
-- Determine project path from `options.projectPath` or `process.cwd()`
-- Create `.handoff/` directory if it doesn't exist (`fs.mkdirSync` with `recursive: true`)
-- Write content to `.handoff/RESUME.md`
-- Also write the raw session data to `.handoff/session.json` if available
+export function analyzeConversation(messages: ConversationMessage[]): ConversationAnalysis {
+  return {
+    taskDescription: extractTaskDescription(messages),
+    decisions: extractDecisions(messages),
+    blockers: extractBlockers(messages),
+    completedSteps: extractCompletedSteps(messages),
+  };
+}
+```
 
-### Task 6: Clipboard Provider
+#### `extractTaskDescription(messages)`
 
-**File:** `src/providers/clipboard-provider.ts`
+Find the first **meaningful** user message. Skip messages that are:
+- Shorter than 15 characters
+- Contain "interrupted" or "Request interrupted"
+- Are just "yes", "ok", "sure", "continue", "go ahead", etc.
+- Start with "[" (system-injected messages)
 
-Implement `deliver(content, options?)`:
-- Use `clipboardy` package (already in deps) to copy content
-- `import clipboard from 'clipboardy'` then `clipboard.writeSync(content)`
-- Wrap in try/catch — clipboard may not be available in all environments (SSH, headless)
-- If clipboard fails, log a warning but don't throw
+Truncate to 300 characters. Fallback to `"Unknown task"` if nothing found.
 
-### Task 7: Provider Registry
+#### `extractDecisions(messages)`
 
-**File:** `src/providers/index.ts`
+Scan **assistant** messages for decision patterns. Look for phrases like:
+- "I'll use X instead of Y" / "I'll go with X"
+- "Let's use X" / "Let's go with X"
+- "decided to" / "choosing X over Y"
+- "better to use X" / "X is better than Y"
+- "using X for" / "picked X because"
 
-Implement `getProviders(target)`:
-- `"file"` → return `[FileProvider]`
-- `"clipboard"` → return `[ClipboardProvider]`
-- Any agent ID or default → return `[FileProvider, ClipboardProvider]` (belt and suspenders)
+Extract the sentence containing the pattern. Deduplicate. Cap at 10 decisions.
 
-### Task 8: Test Fixtures
+#### `extractBlockers(messages)`
 
-**File:** `tests/fixtures/claude-code-session.jsonl`
+Scan **all** messages for error/blocker patterns:
+- Lines containing "Error:", "error:", "ERROR"
+- Lines containing "failed", "Failed", "FAILED"
+- Lines containing "unable to", "can't", "cannot"
+- Lines containing "permission denied", "not found", "404", "500", "timeout"
+- Lines matching stack trace patterns (e.g., "at Object.<anonymous>")
 
-Create a realistic sample Claude Code session (10-15 lines) that your adapter can parse. Follow the format from PRD Appendix A. Include:
-- 2-3 user messages
-- 2-3 assistant messages with tool_use blocks
-- At least one Write tool_use (file change)
-- At least one Read tool_use
-- Token usage fields
+Extract just the relevant line (not the whole message). Deduplicate. Cap at 10 blockers.
 
-Then update `tests/adapters/claude-code.test.ts` to test against this fixture.
+#### `extractCompletedSteps(messages)`
+
+Scan **assistant** messages for completion signals:
+- "Done", "Complete", "Finished", "Created", "Added", "Updated", "Fixed", "Implemented"
+- Look for these at the start of a sentence or after a tool use
+
+Extract a short summary (first 100 chars of the sentence). Cap at 15 steps.
+
+### Task 3: Integrate analyzer into the adapter
+
+**File:** `src/adapters/claude-code/adapter.ts`
+
+After building the messages array in `capture()`, call `analyzeConversation(messages)` and use its output to populate the `task`, `decisions`, and `blockers` fields:
+
+```typescript
+import { analyzeConversation } from "../../core/conversation-analyzer.js";
+
+// Inside capture(), after building messages array:
+const analysis = analyzeConversation(messages);
+
+// Then in the CapturedSession object:
+decisions: analysis.decisions,
+blockers: analysis.blockers,
+task: {
+  description: analysis.taskDescription,
+  completed: analysis.completedSteps,
+  remaining: [],
+  inProgress: lastAssistantMessage ? lastAssistantMessage.substring(0, 200) : undefined,
+  blockers: analysis.blockers,
+},
+```
+
+### Task 4: Add a richer test fixture
+
+**File:** `tests/fixtures/claude-code-session-rich.jsonl`
+
+Create a 20+ line JSONL fixture that has:
+- A clear first user message describing a task (e.g., "Build a REST API with JWT auth")
+- An assistant message with a decision ("I'll use Express instead of Fastify because...")
+- An assistant message with a completed step ("Created the auth middleware")
+- A tool_result with an error ("Error: ECONNREFUSED 127.0.0.1:5432")
+- An assistant message acknowledging the error ("The database connection failed, let me fix the connection string")
+- More back and forth showing progress
+- At least 3 file changes (Write/Edit tool_use blocks)
+
+Then add tests in `tests/adapters/claude-code.test.ts`:
+```typescript
+describe("conversation analysis", () => {
+  it("should extract a meaningful task description");
+  it("should find decisions from assistant messages");
+  it("should detect errors and blockers");
+  it("should identify completed steps");
+});
+```
+
+### Task 5: Tests for the conversation analyzer
+
+**File:** `tests/core/conversation-analyzer.test.ts` (create new file)
+
+Test the analyzer directly with crafted message arrays:
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { analyzeConversation } from "../../src/core/conversation-analyzer.js";
+
+describe("Conversation Analyzer", () => {
+  it("should skip short/interrupted messages for task description");
+  it("should extract decisions from 'I'll use X' patterns");
+  it("should extract blockers from error messages");
+  it("should extract completed steps from 'Created/Added/Fixed' patterns");
+  it("should deduplicate decisions and blockers");
+  it("should cap results at limits (10 decisions, 10 blockers, 15 steps)");
+});
+```
 
 ---
 
-## Dependencies You Can Add
+## Files you'll create or edit
 
-If you need something not in `package.json`, add it and note it in your PR:
-- You should NOT need anything beyond what's already there for these tasks
+| File | Action |
+|------|--------|
+| `src/core/conversation-analyzer.ts` | **Create new** |
+| `src/adapters/claude-code/adapter.ts` | Edit (wire in project context + analyzer) |
+| `tests/core/conversation-analyzer.test.ts` | **Create new** |
+| `tests/fixtures/claude-code-session-rich.jsonl` | **Create new** |
+| `tests/adapters/claude-code.test.ts` | Edit (add analyzer integration tests) |
+
+## Files NOT to touch
+
+- `src/cli/index.ts` — Prateek owns this
+- `src/core/compression.ts` — Prateek owns this
+- `src/core/prompt-builder.ts` — Prateek owns this
+- `src/core/token-estimator.ts` — Prateek owns this
+
+---
 
 ## When You're Done
 
 ```bash
+# Verify
+npx tsc --noEmit
+npx vitest run
+
+# Smoke test with real data
+npx tsx src/cli/index.ts handoff --source claude-code
+cat .handoff/RESUME.md
+# Verify: git branch is correct, decisions are populated, task description makes sense
+
+# Push
 git add -A
-git commit -m "Implement data layer: Claude Code adapter, project context, providers"
-git push -u origin feat/data-layer
-gh pr create --base main --title "feat: data layer - adapter, context, providers"
+git commit -m "feat: smart extraction - conversation analyzer, project context wiring"
+git push -u origin feat/smart-extraction
+gh pr create --base main --title "feat: smart extraction - decisions, blockers, task inference"
 ```
 
-Tell Prateek so he can review and merge before wiring the CLI.
+Tell Prateek so he can review and merge.
