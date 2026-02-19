@@ -14,9 +14,24 @@ const FIXTURE_PATH = path.resolve(
   "fixtures",
   "claude-code-session.jsonl",
 );
+const RICH_FIXTURE_PATH = path.resolve(
+  __dirname,
+  "..",
+  "fixtures",
+  "claude-code-session-rich.jsonl",
+);
 
 const PROJECT_HASH = "-tmp-test-project";
 const SESSION_ID = "test-session-001";
+
+function toClaudeProjectHash(projectPath: string): string {
+  let normalized = projectPath;
+  if (process.platform === "win32") {
+    normalized = normalized.replace(/\\/g, "/");
+    normalized = normalized.replace(/^([A-Za-z]):/, "$1-");
+  }
+  return normalized.replace(/\//g, "-");
+}
 
 describe("ClaudeCodeAdapter", () => {
   let adapter: ClaudeCodeAdapter;
@@ -198,6 +213,121 @@ describe("ClaudeCodeAdapter", () => {
 
       // Verify all valid messages are still captured (10 messages from 6 valid lines)
       expect(session.conversation.messages.length).toBe(10);
+    });
+
+    it("should enrich project context from filesystem", async () => {
+      const projectRoot = path.join(
+        os.tmpdir(),
+        "agentrelayctx",
+        "workspace",
+        "demoproject",
+      );
+      fs.mkdirSync(projectRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(projectRoot, "package.json"),
+        JSON.stringify({ name: "demo-project" }),
+      );
+      fs.writeFileSync(
+        path.join(projectRoot, "CLAUDE.md"),
+        "Project memory note: prefer migrations over sync.",
+      );
+      fs.mkdirSync(path.join(projectRoot, "src"), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, "src", "index.ts"), "export {};\n");
+
+      const hash = toClaudeProjectHash(projectRoot);
+      const contextSessionId = "test-session-context";
+      const contextSessionDir = path.join(projectsDir, hash);
+      fs.mkdirSync(contextSessionDir, { recursive: true });
+      fs.copyFileSync(
+        FIXTURE_PATH,
+        path.join(contextSessionDir, `${contextSessionId}.jsonl`),
+      );
+
+      const session = await adapter.capture(contextSessionId);
+
+      expect(session.project.path).toBe(projectRoot);
+      expect(session.project.name).toBe("demo-project");
+      expect(session.project.structure).toContain("package.json");
+      expect(session.project.memoryFileContents).toContain("Project memory note");
+
+      fs.rmSync(path.join(os.tmpdir(), "agentrelayctx"), {
+        recursive: true,
+        force: true,
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // conversation analysis
+  // ---------------------------------------------------------------------------
+
+  describe("conversation analysis", () => {
+    beforeEach(() => {
+      fs.copyFileSync(RICH_FIXTURE_PATH, sessionFile);
+    });
+
+    it("should extract a meaningful task description", async () => {
+      const session = await adapter.capture(SESSION_ID);
+      expect(session.task.description).toContain(
+        "Build a REST API with JWT auth",
+      );
+      expect(session.task.description.toLowerCase()).not.toContain("interrupted");
+    });
+
+    it("should find decisions from assistant messages", async () => {
+      const session = await adapter.capture(SESSION_ID);
+
+      expect(session.decisions.length).toBeGreaterThan(0);
+      expect(
+        session.decisions.some((decision) =>
+          decision.includes("Express instead of Fastify"),
+        ),
+      ).toBe(true);
+      expect(
+        session.decisions.some((decision) =>
+          decision.toLowerCase().includes("let's use zod"),
+        ),
+      ).toBe(true);
+    });
+
+    it("should detect errors and blockers", async () => {
+      const session = await adapter.capture(SESSION_ID);
+
+      expect(session.blockers.length).toBeGreaterThan(0);
+      expect(
+        session.blockers.some((blocker) => blocker.includes("ECONNREFUSED")),
+      ).toBe(true);
+      expect(
+        session.blockers.some((blocker) =>
+          blocker.includes("Permission denied"),
+        ),
+      ).toBe(true);
+      expect(
+        session.blockers.some((blocker) =>
+          blocker.includes("Stack trace: Object.<anonymous>"),
+        ),
+      ).toBe(true);
+    });
+
+    it("should identify completed steps", async () => {
+      const session = await adapter.capture(SESSION_ID);
+
+      expect(session.task.completed.length).toBeGreaterThan(0);
+      expect(
+        session.task.completed.some((step) =>
+          step.includes("Created the initial server bootstrap"),
+        ),
+      ).toBe(true);
+      expect(
+        session.task.completed.some((step) =>
+          step.includes("Implemented integration tests"),
+        ),
+      ).toBe(true);
+      expect(
+        session.task.completed.some((step) =>
+          step.includes("Fixed token expiration handling"),
+        ),
+      ).toBe(true);
     });
   });
 
