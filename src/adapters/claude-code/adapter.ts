@@ -5,6 +5,8 @@ import os from "node:os";
 import readline from "node:readline";
 import { glob } from "glob";
 import { BaseAdapter } from "../base-adapter.js";
+import { analyzeConversation } from "../../core/conversation-analyzer.js";
+import { extractProjectContext } from "../../core/project-context.js";
 import type {
   AgentId,
   CapturedSession,
@@ -104,7 +106,6 @@ export class ClaudeCodeAdapter extends BaseAdapter {
     const messages: ConversationMessage[] = [];
     const fileChanges = new Map<string, FileChange>();
     let totalTokens = 0;
-    let firstUserMessage = "";
     let lastAssistantMessage = "";
     let sessionStartedAt: string | undefined;
 
@@ -148,10 +149,7 @@ export class ClaudeCodeAdapter extends BaseAdapter {
 
       const textContent = textParts.join("\n");
 
-      // Track first user message and last assistant message
-      if (role === "user" && !firstUserMessage && textContent) {
-        firstUserMessage = textContent;
-      }
+      // Track last assistant message for in-progress summary
       if (role === "assistant" && textContent) {
         lastAssistantMessage = textContent;
       }
@@ -222,6 +220,8 @@ export class ClaudeCodeAdapter extends BaseAdapter {
     // Infer project path from the directory structure
     const parentDir = path.basename(path.dirname(filePath));
     const inferredProjectPath = this.hashToPath(parentDir);
+    const projectContext = await extractProjectContext(inferredProjectPath);
+    const analysis = analyzeConversation(messages);
 
     const session: CapturedSession = {
       version: "1.0",
@@ -230,8 +230,9 @@ export class ClaudeCodeAdapter extends BaseAdapter {
       sessionId,
       sessionStartedAt,
       project: {
-        path: inferredProjectPath,
-        name: path.basename(inferredProjectPath),
+        ...projectContext,
+        path: projectContext.path || inferredProjectPath,
+        name: projectContext.name || path.basename(inferredProjectPath),
       },
       conversation: {
         messageCount: messages.length,
@@ -239,16 +240,16 @@ export class ClaudeCodeAdapter extends BaseAdapter {
         messages,
       },
       filesChanged: Array.from(fileChanges.values()),
-      decisions: [],
-      blockers: [],
+      decisions: analysis.decisions,
+      blockers: analysis.blockers,
       task: {
-        description: firstUserMessage || "Unknown task",
-        completed: [],
+        description: analysis.taskDescription,
+        completed: analysis.completedSteps,
         remaining: [],
         inProgress: lastAssistantMessage
           ? lastAssistantMessage.substring(0, 200)
           : undefined,
-        blockers: [],
+        blockers: analysis.blockers,
       },
     };
 
