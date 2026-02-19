@@ -3,8 +3,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { detectAgents, autoDetectSource, getAdapter } from "../adapters/index.js";
 import { compress } from "../core/compression.js";
 import { extractProjectContext } from "../core/project-context.js";
@@ -12,6 +12,7 @@ import { buildResumePrompt } from "../core/prompt-builder.js";
 import { AGENT_REGISTRY, getUsableTokenBudget } from "../core/registry.js";
 import { Watcher } from "../core/watcher.js";
 import type { AgentId, WatcherEvent } from "../types/index.js";
+import { resolveOutputPath } from "./utils.js";
 
 // --- verbose logger ---
 let verbose = false;
@@ -19,27 +20,6 @@ function debug(...args: unknown[]) {
   if (verbose) {
     console.log(chalk.dim("[debug]"), ...args);
   }
-}
-
-/**
- * Resolve the output path for RESUME.md.
- * - If path is a directory or ends with `/`, write RESUME.md inside it.
- * - Otherwise treat as a file path.
- */
-function resolveOutputPath(outputFlag: string | undefined, projectPath: string): { resumePath: string; sessionDir: string } {
-  if (!outputFlag) {
-    const handoffDir = join(projectPath, ".handoff");
-    return { resumePath: join(handoffDir, "RESUME.md"), sessionDir: handoffDir };
-  }
-
-  const isDir = outputFlag.endsWith("/") || outputFlag.endsWith("\\") ||
-    (existsSync(outputFlag) && lstatSync(outputFlag).isDirectory());
-
-  if (isDir) {
-    return { resumePath: join(outputFlag, "RESUME.md"), sessionDir: outputFlag };
-  }
-
-  return { resumePath: outputFlag, sessionDir: dirname(outputFlag) };
 }
 
 const program = new Command();
