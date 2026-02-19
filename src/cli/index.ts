@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectAgents, autoDetectSource, getAdapter } from "../adapters/index.js";
 import { compress } from "../core/compression.js";
@@ -292,9 +292,9 @@ program
   .description("Start background watcher for rate limit detection")
   .option("--agents <csv>", "Comma-separated list of agents to watch")
   .option("--interval <seconds>", "Snapshot interval in seconds", "30")
-  .action(async (options) => {
-    // TODO: Start watcher
-    console.log("watch: not implemented yet");
+  .action(async () => {
+    console.log(chalk.yellow("Watch mode is coming in a future release."));
+    console.log(chalk.dim("Use 'agentrelay handoff' for manual handoffs in the meantime."));
   });
 
 // --- resume ---
@@ -307,6 +307,11 @@ program
   .action(async (options) => {
     try {
       const filePath = options.file || join(process.cwd(), ".handoff", "session.json");
+      if (!existsSync(filePath)) {
+        console.error(chalk.red("File not found:"), filePath);
+        console.error(chalk.dim("Run 'agentrelay capture' first, or use --file to specify a path."));
+        process.exit(1);
+      }
       console.log(chalk.dim(`Reading ${filePath}...`));
       const raw = readFileSync(filePath, "utf-8");
       const session = JSON.parse(raw);
