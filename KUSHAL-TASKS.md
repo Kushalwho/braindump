@@ -1,194 +1,126 @@
-# AgentRelay — Kushal's Task Sheet (Round 2)
+# AgentRelay — Kushal's Task Sheet (Round 3)
 
 ## Status
 
-Your Round 1 work is merged (PR #2). The full pipeline works end-to-end now — `agentrelay handoff` captures from Claude Code, compresses, and generates RESUME.md.
+Rounds 1 and 2 are merged (PRs #2 and #4). MVP is fully working — `agentrelay handoff` captures from Claude Code, enriches with project context, extracts decisions/blockers/tasks, compresses, and generates RESUME.md.
 
-But we found 3 bugs during real testing. Your Round 2 tasks fix them.
+**Round 3 goal:** Add Cursor and Codex adapters so AgentRelay works with all 3 agents (v0.2 milestone from PRD).
 
-## Your Branch: `feat/smart-extraction`
+## Your Branch: `feat/cursor-codex-adapters`
 
 ```bash
 git checkout main
 git pull origin main
 npm install
-git checkout -b feat/smart-extraction
+git checkout -b feat/cursor-codex-adapters
 ```
 
 ---
 
-## Context: What's wrong
+## Context: What exists now
 
-We ran `agentrelay handoff` on a real Claude Code session. Output issues:
+- `src/adapters/claude-code/adapter.ts` — Full working adapter (your Round 1+2 work)
+- `src/adapters/cursor/adapter.ts` — Stub, all methods throw "Not implemented"
+- `src/adapters/codex/adapter.ts` — Stub, all methods throw "Not implemented"
+- `src/adapters/base-adapter.ts` — Base class with shared utilities
+- `src/adapters/index.ts` — Adapter registry with `detectAgents()`, `autoDetectSource()`, `getAdapter()`
+- `src/core/conversation-analyzer.ts` — Your Round 2 analyzer, use it in both new adapters
+- `src/core/project-context.ts` — Your Round 2 context extractor, use it in both new adapters
+- `src/core/registry.ts` — Has storage paths for all 3 agents per OS
 
-1. **Git branch shows "unknown"** — `extractProjectContext()` exists but is never called during capture. The session's `project` field only has `path` and `name`, no git info.
-
-2. **Task description is junk** — the adapter grabs the first user message as the task description. But the first message in our session was `"[Request interrupted by user for tool use]"`. Useless.
-
-3. **Decisions and blockers are always `[]`** — nobody scans the conversation to extract things like "I'll use Express instead of Fastify" or "Error: OAuth token refresh failed".
+The Claude Code adapter is the reference implementation. Follow its patterns for the new adapters.
 
 ---
 
 ## Tasks (in order)
 
-### Task 1: Wire `extractProjectContext()` into the adapter's `capture()`
+### Task 1: Implement the Codex adapter
 
-**File:** `src/adapters/claude-code/adapter.ts`
+**File:** `src/adapters/codex/adapter.ts`
 
-Right now `capture()` builds the session with a bare project object:
-```typescript
-project: {
-  path: inferredProjectPath,
-  name: path.basename(inferredProjectPath),
-}
-```
+Codex CLI stores sessions at `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<session-id>.jsonl`
 
-Fix: import and call `extractProjectContext()` from `../../core/project-context.js`, then spread its result into the session's project field:
+Key differences from Claude Code:
+- Sessions are nested by date (YYYY/MM/DD/ subdirectories)
+- Filename format: `rollout-2025-01-22T10-30-00-abc123.jsonl`
+- JSONL entries can have `role: "developer"` → map to `"system"`
+- Content can be a string OR an array of content blocks (OpenAI format)
+- Tool calls use `type: "tool_call"` with `name: "write_file"`, `"edit_file"`, `"shell"`, `"read_file"`
+- Some entries have a `cwd` field → use as project path
+- Memory file: `AGENTS.md` (project root or `~/.codex/AGENTS.md`)
 
-```typescript
-import { extractProjectContext } from "../../core/project-context.js";
+Implementation:
+1. `detect()` — Check if `~/.codex/sessions/` exists and has `.jsonl` files
+2. `listSessions()` — Glob for `~/.codex/sessions/**/*.jsonl`, parse filenames for session IDs, read first/last lines for timestamps, sort by mtime descending
+3. `capture(sessionId)` — Stream JSONL, extract messages/tool calls/file changes, call `analyzeConversation()` and `extractProjectContext()`
+4. `captureLatest()` — Find most recent file and capture it
 
-// Inside capture(), after building the session:
-const projectContext = await extractProjectContext(inferredProjectPath);
-session.project = { ...session.project, ...projectContext };
-```
+See PRD Section 9.4 for full spec.
 
-This fills in `gitBranch`, `gitStatus`, `gitLog`, `structure`, and `memoryFileContents`.
+### Task 2: Implement the Cursor adapter
 
-**Test:** After this change, run `npx tsx src/cli/index.ts handoff --source claude-code` and check that `.handoff/RESUME.md` shows the real git branch instead of "unknown".
+**File:** `src/adapters/cursor/adapter.ts`
 
-### Task 2: Build a conversation analyzer
+Cursor stores sessions in SQLite: `<app-data>/Cursor/User/workspaceStorage/<hash>/state.vscdb`
 
-**File:** `src/core/conversation-analyzer.ts` (create new file)
+Platform paths (from registry.ts):
+- macOS: `~/Library/Application Support/Cursor/User/workspaceStorage/`
+- Linux: `~/.config/Cursor/User/workspaceStorage/`
+- Windows: `%APPDATA%/Cursor/User/workspaceStorage/`
 
-Create a module that scans conversation messages and extracts structured info.
+Key details:
+- Open SQLite in **READ-ONLY mode**: `new Database(path, { readonly: true, fileMustExist: true })`
+- Table: `ItemTable (key TEXT, value TEXT)`
+- Try keys in order:
+  1. `composer.composerData` → JSON with `allComposers` array (modern format)
+  2. `workbench.panel.aichat.view.aichat.chatdata` → legacy format
+- Individual messages: `bubbleId:<composerId>:<bubbleId>` keys
+- Each workspace folder has a `workspace.json` with `{ "folder": "file:///path/to/project" }`
+- Session ID format: `<workspace-hash>:<composerId>`
+- Memory file: `.cursorrules` or `.cursor/rules/*.mdc`
+- `better-sqlite3` is already in package.json dependencies
 
-```typescript
-import type { ConversationMessage } from "../types/index.js";
+Implementation:
+1. `detect()` — Check if workspaceStorage path exists for current platform
+2. `listSessions()` — Scan workspace folders, open each state.vscdb, read composer list, resolve project paths from workspace.json
+3. `capture(sessionId)` — Parse workspace-hash:composerId, open correct state.vscdb, read messages, call `analyzeConversation()` and `extractProjectContext()`
+4. `captureLatest()` — Find most recently updated composer and capture it
 
-export interface ConversationAnalysis {
-  taskDescription: string;
-  decisions: string[];
-  blockers: string[];
-  completedSteps: string[];
-}
+See PRD Sections 9.2-9.3 for full spec.
 
-export function analyzeConversation(messages: ConversationMessage[]): ConversationAnalysis {
-  return {
-    taskDescription: extractTaskDescription(messages),
-    decisions: extractDecisions(messages),
-    blockers: extractBlockers(messages),
-    completedSteps: extractCompletedSteps(messages),
-  };
-}
-```
+### Task 3: Add test fixtures
 
-#### `extractTaskDescription(messages)`
+**Files to create:**
+- `tests/fixtures/codex-session.jsonl` — 15+ line JSONL fixture with Codex format entries (role: user/assistant/developer, tool_calls, content as string and array, cwd field)
+- `tests/fixtures/cursor-state.json` — Mock data representing what you'd read from SQLite keys (since we can't ship a .vscdb in fixtures, mock the DB reads)
 
-Find the first **meaningful** user message. Skip messages that are:
-- Shorter than 15 characters
-- Contain "interrupted" or "Request interrupted"
-- Are just "yes", "ok", "sure", "continue", "go ahead", etc.
-- Start with "[" (system-injected messages)
+### Task 4: Write Codex adapter tests
 
-Truncate to 300 characters. Fallback to `"Unknown task"` if nothing found.
+**File:** `tests/adapters/codex.test.ts`
 
-#### `extractDecisions(messages)`
+Replace the skipped stubs with real tests. Follow the Claude Code test patterns:
+- Mock `os.homedir()` and create temp directory structure
+- Test `detect()` with and without session files
+- Test `listSessions()` ordering (most recent first)
+- Test `capture()` message parsing, file change extraction, conversation analysis
+- Test `captureLatest()` picks most recent
+- Test `role: "developer"` → `"system"` mapping
+- Test content as string vs array format
 
-Scan **assistant** messages for decision patterns. Look for phrases like:
-- "I'll use X instead of Y" / "I'll go with X"
-- "Let's use X" / "Let's go with X"
-- "decided to" / "choosing X over Y"
-- "better to use X" / "X is better than Y"
-- "using X for" / "picked X because"
+### Task 5: Write Cursor adapter tests
 
-Extract the sentence containing the pattern. Deduplicate. Cap at 10 decisions.
+**File:** `tests/adapters/cursor.test.ts`
 
-#### `extractBlockers(messages)`
-
-Scan **all** messages for error/blocker patterns:
-- Lines containing "Error:", "error:", "ERROR"
-- Lines containing "failed", "Failed", "FAILED"
-- Lines containing "unable to", "can't", "cannot"
-- Lines containing "permission denied", "not found", "404", "500", "timeout"
-- Lines matching stack trace patterns (e.g., "at Object.<anonymous>")
-
-Extract just the relevant line (not the whole message). Deduplicate. Cap at 10 blockers.
-
-#### `extractCompletedSteps(messages)`
-
-Scan **assistant** messages for completion signals:
-- "Done", "Complete", "Finished", "Created", "Added", "Updated", "Fixed", "Implemented"
-- Look for these at the start of a sentence or after a tool use
-
-Extract a short summary (first 100 chars of the sentence). Cap at 15 steps.
-
-### Task 3: Integrate analyzer into the adapter
-
-**File:** `src/adapters/claude-code/adapter.ts`
-
-After building the messages array in `capture()`, call `analyzeConversation(messages)` and use its output to populate the `task`, `decisions`, and `blockers` fields:
-
-```typescript
-import { analyzeConversation } from "../../core/conversation-analyzer.js";
-
-// Inside capture(), after building messages array:
-const analysis = analyzeConversation(messages);
-
-// Then in the CapturedSession object:
-decisions: analysis.decisions,
-blockers: analysis.blockers,
-task: {
-  description: analysis.taskDescription,
-  completed: analysis.completedSteps,
-  remaining: [],
-  inProgress: lastAssistantMessage ? lastAssistantMessage.substring(0, 200) : undefined,
-  blockers: analysis.blockers,
-},
-```
-
-### Task 4: Add a richer test fixture
-
-**File:** `tests/fixtures/claude-code-session-rich.jsonl`
-
-Create a 20+ line JSONL fixture that has:
-- A clear first user message describing a task (e.g., "Build a REST API with JWT auth")
-- An assistant message with a decision ("I'll use Express instead of Fastify because...")
-- An assistant message with a completed step ("Created the auth middleware")
-- A tool_result with an error ("Error: ECONNREFUSED 127.0.0.1:5432")
-- An assistant message acknowledging the error ("The database connection failed, let me fix the connection string")
-- More back and forth showing progress
-- At least 3 file changes (Write/Edit tool_use blocks)
-
-Then add tests in `tests/adapters/claude-code.test.ts`:
-```typescript
-describe("conversation analysis", () => {
-  it("should extract a meaningful task description");
-  it("should find decisions from assistant messages");
-  it("should detect errors and blockers");
-  it("should identify completed steps");
-});
-```
-
-### Task 5: Tests for the conversation analyzer
-
-**File:** `tests/core/conversation-analyzer.test.ts` (create new file)
-
-Test the analyzer directly with crafted message arrays:
-
-```typescript
-import { describe, it, expect } from "vitest";
-import { analyzeConversation } from "../../src/core/conversation-analyzer.js";
-
-describe("Conversation Analyzer", () => {
-  it("should skip short/interrupted messages for task description");
-  it("should extract decisions from 'I'll use X' patterns");
-  it("should extract blockers from error messages");
-  it("should extract completed steps from 'Created/Added/Fixed' patterns");
-  it("should deduplicate decisions and blockers");
-  it("should cap results at limits (10 decisions, 10 blockers, 15 steps)");
-});
-```
+Replace the skipped stubs with real tests:
+- Mock the workspace storage directory
+- For SQLite testing, either:
+  - Create a real temp SQLite DB with better-sqlite3 in the test setup, or
+  - Abstract the DB reads behind a method you can mock
+- Test `detect()` for different platforms
+- Test `listSessions()` with multiple workspaces
+- Test `capture()` with modern composer format
+- Test session ID parsing (`workspace-hash:composerId`)
+- Test `captureLatest()`
 
 ---
 
@@ -196,11 +128,13 @@ describe("Conversation Analyzer", () => {
 
 | File | Action |
 |------|--------|
-| `src/core/conversation-analyzer.ts` | **Create new** |
-| `src/adapters/claude-code/adapter.ts` | Edit (wire in project context + analyzer) |
-| `tests/core/conversation-analyzer.test.ts` | **Create new** |
-| `tests/fixtures/claude-code-session-rich.jsonl` | **Create new** |
-| `tests/adapters/claude-code.test.ts` | Edit (add analyzer integration tests) |
+| `src/adapters/codex/adapter.ts` | **Rewrite** (replace stub) |
+| `src/adapters/cursor/adapter.ts` | **Rewrite** (replace stub) |
+| `tests/adapters/codex.test.ts` | **Rewrite** (replace skipped stubs) |
+| `tests/adapters/cursor.test.ts` | **Rewrite** (replace skipped stubs) |
+| `tests/fixtures/codex-session.jsonl` | **Create new** |
+| `tests/fixtures/cursor-state.json` | **Create new** |
+| `src/adapters/index.ts` | May need minor edits for adapter registration |
 
 ## Files NOT to touch
 
@@ -208,8 +142,19 @@ describe("Conversation Analyzer", () => {
 - `src/core/compression.ts` — Prateek owns this
 - `src/core/prompt-builder.ts` — Prateek owns this
 - `src/core/token-estimator.ts` — Prateek owns this
+- `tests/core/*` — Prateek owns these
+- `tests/e2e/*` — Prateek owns these
 
 ---
+
+## Reference: How Claude Code adapter does it
+
+Look at `src/adapters/claude-code/adapter.ts` for patterns to follow:
+- Streaming JSONL parsing with `readline.createInterface()`
+- File change extraction from tool_use blocks (Write/Edit)
+- Integration with `analyzeConversation()` and `extractProjectContext()`
+- Building the full `CapturedSession` object
+- Error handling (malformed lines, missing files)
 
 ## When You're Done
 
@@ -218,16 +163,15 @@ describe("Conversation Analyzer", () => {
 npx tsc --noEmit
 npx vitest run
 
-# Smoke test with real data
-npx tsx src/cli/index.ts handoff --source claude-code
-cat .handoff/RESUME.md
-# Verify: git branch is correct, decisions are populated, task description makes sense
+# Smoke test (if you have Cursor/Codex installed)
+npx tsx src/cli/index.ts detect
+npx tsx src/cli/index.ts list
 
 # Push
 git add -A
-git commit -m "feat: smart extraction - conversation analyzer, project context wiring"
-git push -u origin feat/smart-extraction
-gh pr create --base main --title "feat: smart extraction - decisions, blockers, task inference"
+git commit -m "feat: Cursor and Codex adapters with full test coverage"
+git push -u origin feat/cursor-codex-adapters
+gh pr create --base main --title "feat: Cursor and Codex adapters (v0.2)"
 ```
 
 Tell Prateek so he can review and merge.

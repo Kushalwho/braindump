@@ -11,8 +11,8 @@ AI coding agents are context silos. When your session hits a rate limit or runs 
 | Agent | Status |
 |-------|--------|
 | Claude Code | Working (MVP) |
-| Cursor | Planned (v0.2) |
-| Codex CLI | Planned (v0.2) |
+| Cursor | In progress (v0.2) |
+| Codex CLI | In progress (v0.2) |
 
 ## Installation
 
@@ -111,6 +111,7 @@ src/
 │   └── codex/adapter.ts       # JSONL parser (planned)
 ├── core/
 │   ├── compression.ts         # Priority-layered compression engine
+│   ├── conversation-analyzer.ts # Extracts tasks, decisions, blockers
 │   ├── prompt-builder.ts      # RESUME.md template assembly
 │   ├── token-estimator.ts     # Character-based token estimation
 │   ├── project-context.ts     # Git info, directory tree, memory files
