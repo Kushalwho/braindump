@@ -84,6 +84,33 @@ describe("CodexAdapter", () => {
       expect(sessions[0].id).toBe(SESSION_ID);
       expect(sessions[1].id).toBe(olderId);
     });
+
+    it("should match project path from session_meta payload cwd", async () => {
+      const metaSessionId = "rollout-2026-02-21T10-00-00-meta-only";
+      const metaProjectPath = path.join(tmpHome, "meta-project");
+      const metaFile = path.join(sessionsDir, `${metaSessionId}.jsonl`);
+      fs.mkdirSync(metaProjectPath, { recursive: true });
+
+      const lines = [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-02-21T10:00:00Z",
+          payload: {
+            cwd: metaProjectPath,
+          },
+        }),
+        JSON.stringify({
+          role: "user",
+          content: "Use metadata cwd only",
+          timestamp: "2026-02-21T10:00:10Z",
+        }),
+      ];
+      fs.writeFileSync(metaFile, `${lines.join("\n")}\n`);
+      fs.utimesSync(metaFile, new Date("2026-02-21T10:00:10Z"), new Date("2026-02-21T10:00:10Z"));
+
+      const sessions = await adapter.listSessions(metaProjectPath);
+      expect(sessions.some((session) => session.id === metaSessionId)).toBe(true);
+    });
   });
 
   describe("capture", () => {
@@ -181,6 +208,37 @@ describe("CodexAdapter", () => {
         true,
       );
       expect(session.task.description).toBe("Unknown task");
+    });
+
+    it("should infer project path from session_meta payload cwd", async () => {
+      const metaSessionId = "rollout-2026-02-21T11-00-00-meta-capture";
+      const metaProjectPath = path.join(tmpHome, "meta-capture-project");
+      const metaFile = path.join(sessionsDir, `${metaSessionId}.jsonl`);
+      fs.mkdirSync(metaProjectPath, { recursive: true });
+
+      const lines = [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-02-21T11:00:00Z",
+          payload: {
+            cwd: metaProjectPath,
+          },
+        }),
+        JSON.stringify({
+          role: "user",
+          content: "Build metadata-based capture",
+          timestamp: "2026-02-21T11:00:10Z",
+        }),
+        JSON.stringify({
+          role: "assistant",
+          content: "Created metadata-driven parser.",
+          timestamp: "2026-02-21T11:00:20Z",
+        }),
+      ];
+      fs.writeFileSync(metaFile, `${lines.join("\n")}\n`);
+
+      const session = await adapter.capture(metaSessionId);
+      expect(session.project.path).toBe(metaProjectPath);
     });
   });
 

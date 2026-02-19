@@ -108,8 +108,8 @@ export class CodexAdapter extends BaseAdapter {
         continue;
       }
 
-      if (!detectedProjectPath && typeof entry.cwd === "string" && entry.cwd) {
-        detectedProjectPath = entry.cwd;
+      if (!detectedProjectPath) {
+        detectedProjectPath = this.extractProjectPath(entry);
       }
 
       const timestamp = this.entryTimestamp(entry);
@@ -274,8 +274,8 @@ export class CodexAdapter extends BaseAdapter {
         firstEntry = entry;
       }
       lastEntry = entry;
-      if (!projectPath && typeof entry.cwd === "string" && entry.cwd) {
-        projectPath = entry.cwd;
+      if (!projectPath) {
+        projectPath = this.extractProjectPath(entry);
       }
     }
 
@@ -382,6 +382,20 @@ export class CodexAdapter extends BaseAdapter {
       (usage.input_tokens ?? usage.prompt_tokens ?? 0) +
       (usage.output_tokens ?? usage.completion_tokens ?? 0)
     );
+  }
+
+  private extractProjectPath(entry: CodexEntry): string | undefined {
+    if (typeof entry.cwd === "string" && entry.cwd) {
+      return entry.cwd;
+    }
+    if (
+      entry.payload &&
+      typeof entry.payload.cwd === "string" &&
+      entry.payload.cwd
+    ) {
+      return entry.payload.cwd;
+    }
+    return undefined;
   }
 
   private parseContent(
@@ -541,6 +555,9 @@ interface CodexEntry {
   content?: unknown;
   timestamp?: string;
   cwd?: string;
+  payload?: {
+    cwd?: string;
+  };
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
