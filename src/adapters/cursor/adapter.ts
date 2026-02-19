@@ -23,6 +23,7 @@ export class CursorAdapter extends BaseAdapter {
   agentId: AgentId = "cursor";
 
   private _workspaceStorageDir: string | undefined;
+  private _globalDbPath: string | undefined | null;
 
   private get workspaceStorageDir(): string {
     if (this._workspaceStorageDir) {
@@ -30,6 +31,18 @@ export class CursorAdapter extends BaseAdapter {
     }
     this._workspaceStorageDir = this.resolveWorkspaceStorageDir();
     return this._workspaceStorageDir;
+  }
+
+  /**
+   * Path to the global Cursor DB (globalStorage/state.vscdb).
+   * Newer Cursor versions store conversations here in the cursorDiskKV table.
+   */
+  private get globalDbPath(): string | undefined {
+    if (this._globalDbPath !== undefined) {
+      return this._globalDbPath ?? undefined;
+    }
+    this._globalDbPath = this.resolveGlobalDbPath() ?? null;
+    return this._globalDbPath ?? undefined;
   }
 
   private resolveWorkspaceStorageDir(): string {
@@ -115,25 +128,44 @@ export class CursorAdapter extends BaseAdapter {
     return undefined;
   }
 
+  /**
+   * Resolve the path to Cursor's global storage DB.
+   * This is at the same level as workspaceStorage, under globalStorage/state.vscdb.
+   */
+  private resolveGlobalDbPath(): string | undefined {
+    const userDir = path.dirname(this.workspaceStorageDir);
+    const dbPath = path.join(userDir, "globalStorage", "state.vscdb");
+    if (fs.existsSync(dbPath)) {
+      return dbPath;
+    }
+    return undefined;
+  }
+
   async detect(): Promise<boolean> {
-    if (!fs.existsSync(this.workspaceStorageDir)) {
-      return false;
+    // Check workspace storage (older Cursor versions)
+    if (fs.existsSync(this.workspaceStorageDir)) {
+      const entries = fs.readdirSync(this.workspaceStorageDir, {
+        withFileTypes: true,
+      });
+      const hasWorkspaceDb = entries.some((entry) => {
+        if (!entry.isDirectory()) {
+          return false;
+        }
+        return fs.existsSync(
+          path.join(this.workspaceStorageDir, entry.name, "state.vscdb"),
+        );
+      });
+      if (hasWorkspaceDb) {
+        return true;
+      }
     }
 
-    const entries = fs.readdirSync(this.workspaceStorageDir, {
-      withFileTypes: true,
-    });
-    return entries.some((entry) => {
-      if (!entry.isDirectory()) {
-        return false;
-      }
-      const dbPath = path.join(
-        this.workspaceStorageDir,
-        entry.name,
-        "state.vscdb",
-      );
-      return fs.existsSync(dbPath);
-    });
+    // Check global storage DB (newer Cursor versions)
+    if (this.globalDbPath) {
+      return true;
+    }
+
+    return false;
   }
 
   async listSessions(projectPath?: string): Promise<SessionInfo[]> {
@@ -216,6 +248,34 @@ export class CursorAdapter extends BaseAdapter {
       }
     }
 
+    // Append sessions from global DB (newer Cursor versions)
+    const existingComposerIds = new Set(
+      sessions.map((s) => s.id.split(":").slice(1).join(":")),
+    );
+    const globalComposers = this.readGlobalComposers();
+    for (const composer of globalComposers) {
+      if (existingComposerIds.has(composer.id)) {
+        // Update message count from global DB if higher
+        const existing = sessions.find((s) => s.id.endsWith(`:${composer.id}`));
+        if (
+          existing &&
+          composer.messageCount &&
+          (!existing.messageCount || composer.messageCount > existing.messageCount)
+        ) {
+          existing.messageCount = composer.messageCount;
+        }
+        continue;
+      }
+      sessions.push({
+        id: `global:${composer.id}`,
+        startedAt: composer.startedAt,
+        lastActiveAt: composer.lastActiveAt,
+        messageCount: composer.messageCount,
+        projectPath: composer.projectPath,
+        preview: composer.preview,
+      });
+    }
+
     sessions.sort((a, b) => {
       const aTime = a.lastActiveAt || a.startedAt || "";
       const bTime = b.lastActiveAt || b.startedAt || "";
@@ -229,15 +289,27 @@ export class CursorAdapter extends BaseAdapter {
     const separator = sessionId.indexOf(":");
     if (separator <= 0) {
       throw new Error(
-        `Invalid Cursor session ID: ${sessionId}. Expected <workspace-hash>:<composer-id>`,
+        `Invalid Cursor session ID: ${sessionId}. Expected <workspace-hash>:<composer-id> or global:<composer-id>`,
       );
     }
 
-    const workspaceHash = sessionId.slice(0, separator);
+    const prefix = sessionId.slice(0, separator);
     const composerId = sessionId.slice(separator + 1);
+
+    // Global DB sessions (global:<composerId>)
+    if (prefix === "global") {
+      return this.captureFromGlobal(composerId, sessionId);
+    }
+
+    // Workspace DB sessions (<workspaceHash>:<composerId>)
+    const workspaceHash = prefix;
     const workspaceDir = path.join(this.workspaceStorageDir, workspaceHash);
     const dbPath = path.join(workspaceDir, "state.vscdb");
     if (!fs.existsSync(dbPath)) {
+      // Workspace DB missing — try global DB fallback
+      if (this.globalDbPath) {
+        return this.captureFromGlobal(composerId, sessionId);
+      }
       throw new Error(`Cursor workspace DB not found: ${dbPath}`);
     }
 
@@ -251,8 +323,73 @@ export class CursorAdapter extends BaseAdapter {
     const db = this.openDatabase(dbPath);
     try {
       const bubbleRows = this.readBubbleRows(db, composerId);
-      for (const row of bubbleRows) {
-        const parsed = this.parseCursorPayload(row.value);
+      this.collectParsedMessages(bubbleRows.map((r) => r.value), messages, fileChanges, (t) => { totalTokens += t; }, (ts) => { if (!sessionStartedAt) sessionStartedAt = ts; }, (msg) => { lastAssistantMessage = msg; });
+
+      if (messages.length === 0) {
+        const composerData = this.getJsonValue(db, `composerData:${composerId}`);
+        const fallbackPayloads = this.extractMessagesFromComposerData(composerData, composerId);
+        this.collectParsedMessages(fallbackPayloads, messages, fileChanges, (t) => { totalTokens += t; }, (ts) => { if (!sessionStartedAt) sessionStartedAt = ts; }, (msg) => { lastAssistantMessage = msg; });
+      }
+
+      if (messages.length === 0) {
+        const legacy = this.getJsonValue(db, "workbench.panel.aichat.view.aichat.chatdata");
+        const legacyPayloads = this.extractMessagesFromLegacy(legacy, composerId);
+        this.collectParsedMessages(legacyPayloads, messages, fileChanges, (t) => { totalTokens += t; }, (ts) => { if (!sessionStartedAt) sessionStartedAt = ts; }, (msg) => { lastAssistantMessage = msg; });
+      }
+    } finally {
+      db.close();
+    }
+
+    // Fallback to global DB when workspace DB had no messages
+    if (messages.length === 0 && this.globalDbPath) {
+      return this.captureFromGlobal(composerId, sessionId, projectPath);
+    }
+
+    return this.buildCapturedSession(
+      sessionId, messages, fileChanges, totalTokens,
+      sessionStartedAt, lastAssistantMessage, projectPath,
+    );
+  }
+
+  /**
+   * Capture a session from the global Cursor DB (cursorDiskKV table).
+   */
+  private async captureFromGlobal(
+    composerId: string,
+    sessionId: string,
+    fallbackProjectPath?: string,
+  ): Promise<CapturedSession> {
+    const dbPath = this.globalDbPath;
+    if (!dbPath) {
+      throw new Error("Cursor global database not found. Is Cursor installed?");
+    }
+
+    const db = this.openDatabase(dbPath);
+    const messages: ConversationMessage[] = [];
+    const fileChanges = new Map<string, FileChange>();
+    let totalTokens = 0;
+    let sessionStartedAt: string | undefined;
+    let lastAssistantMessage = "";
+    let globalProjectPath: string | undefined;
+
+    try {
+      const rows = db
+        .prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE ? ORDER BY key")
+        .all(`bubbleId:${composerId}:%`) as Array<{ key: string; value: string }>;
+
+      for (const row of rows) {
+        let bubble: Record<string, unknown>;
+        try {
+          bubble = JSON.parse(row.value);
+        } catch {
+          continue;
+        }
+
+        if (!globalProjectPath && typeof bubble.workspaceProjectDir === "string") {
+          globalProjectPath = bubble.workspaceProjectDir;
+        }
+
+        const parsed = this.parseCursorPayload(bubble);
         if (parsed.message) {
           messages.push(parsed.message);
           if (!sessionStartedAt && parsed.message.timestamp) {
@@ -262,72 +399,69 @@ export class CursorAdapter extends BaseAdapter {
             lastAssistantMessage = parsed.message.content;
           }
         }
-        for (const toolMessage of parsed.toolMessages) {
-          messages.push(toolMessage);
+        for (const tm of parsed.toolMessages) {
+          messages.push(tm);
         }
-        for (const change of parsed.fileChanges) {
-          fileChanges.set(change.path, change);
+        for (const fc of parsed.fileChanges) {
+          fileChanges.set(fc.path, fc);
         }
         totalTokens += parsed.tokenCount;
-      }
-
-      if (messages.length === 0) {
-        const composerData = this.getJsonValue(db, `composerData:${composerId}`);
-        const fallbackPayloads = this.extractMessagesFromComposerData(
-          composerData,
-          composerId,
-        );
-        for (const payload of fallbackPayloads) {
-          const parsed = this.parseCursorPayload(payload);
-          if (parsed.message) {
-            messages.push(parsed.message);
-            if (!sessionStartedAt && parsed.message.timestamp) {
-              sessionStartedAt = parsed.message.timestamp;
-            }
-            if (parsed.message.role === "assistant") {
-              lastAssistantMessage = parsed.message.content;
-            }
-          }
-          for (const toolMessage of parsed.toolMessages) {
-            messages.push(toolMessage);
-          }
-          for (const change of parsed.fileChanges) {
-            fileChanges.set(change.path, change);
-          }
-          totalTokens += parsed.tokenCount;
-        }
-      }
-
-      if (messages.length === 0) {
-        const legacy = this.getJsonValue(
-          db,
-          "workbench.panel.aichat.view.aichat.chatdata",
-        );
-        const legacyPayloads = this.extractMessagesFromLegacy(legacy, composerId);
-        for (const payload of legacyPayloads) {
-          const parsed = this.parseCursorPayload(payload);
-          if (parsed.message) {
-            messages.push(parsed.message);
-            if (!sessionStartedAt && parsed.message.timestamp) {
-              sessionStartedAt = parsed.message.timestamp;
-            }
-            if (parsed.message.role === "assistant") {
-              lastAssistantMessage = parsed.message.content;
-            }
-          }
-          for (const toolMessage of parsed.toolMessages) {
-            messages.push(toolMessage);
-          }
-          for (const change of parsed.fileChanges) {
-            fileChanges.set(change.path, change);
-          }
-          totalTokens += parsed.tokenCount;
-        }
       }
     } finally {
       db.close();
     }
 
+    const projectPath = fallbackProjectPath || globalProjectPath || process.cwd();
+    return this.buildCapturedSession(
+      sessionId, messages, fileChanges, totalTokens,
+      sessionStartedAt, lastAssistantMessage, projectPath,
+    );
+  }
+
+  /**
+   * Helper to collect parsed messages from payloads into the output arrays.
+   */
+  private collectParsedMessages(
+    payloads: unknown[],
+    messages: ConversationMessage[],
+    fileChanges: Map<string, FileChange>,
+    addTokens: (n: number) => void,
+    setStartedAt: (ts: string) => void,
+    setLastAssistant: (msg: string) => void,
+  ): void {
+    for (const payload of payloads) {
+      const parsed = this.parseCursorPayload(payload);
+      if (parsed.message) {
+        messages.push(parsed.message);
+        if (parsed.message.timestamp) {
+          setStartedAt(parsed.message.timestamp);
+        }
+        if (parsed.message.role === "assistant") {
+          setLastAssistant(parsed.message.content);
+        }
+      }
+      for (const toolMessage of parsed.toolMessages) {
+        messages.push(toolMessage);
+      }
+      for (const change of parsed.fileChanges) {
+        fileChanges.set(change.path, change);
+      }
+      addTokens(parsed.tokenCount);
+    }
+  }
+
+  /**
+   * Build the final CapturedSession object.
+   */
+  private async buildCapturedSession(
+    sessionId: string,
+    messages: ConversationMessage[],
+    fileChanges: Map<string, FileChange>,
+    totalTokens: number,
+    sessionStartedAt: string | undefined,
+    lastAssistantMessage: string,
+    projectPath: string,
+  ): Promise<CapturedSession> {
     messages.sort((a, b) => {
       const aTime = a.timestamp || "";
       const bTime = b.timestamp || "";
@@ -382,7 +516,22 @@ export class CursorAdapter extends BaseAdapter {
   }
 
   private openDatabase(dbPath: string): Database.Database {
-    return new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      return new Database(dbPath, { readonly: true, fileMustExist: true });
+    } catch (err: unknown) {
+      const message = String((err as Error)?.message || err);
+      if (
+        message.includes("SQLITE_IOERR") ||
+        message.includes("SQLITE_BUSY") ||
+        message.includes("database is locked")
+      ) {
+        throw new Error(
+          "Could not read Cursor database — it may be locked.\n" +
+          "Close Cursor completely, then run braindump again.",
+        );
+      }
+      throw err;
+    }
   }
 
   private getAvailableTables(db: Database.Database): string[] {
@@ -450,6 +599,100 @@ export class CursorAdapter extends BaseAdapter {
       "workbench.panel.aichat.view.aichat.chatdata",
     );
     return this.normalizeComposerEntries(legacy);
+  }
+
+  /**
+   * Read composer sessions from the global Cursor DB (cursorDiskKV table).
+   * Returns sessions with bubble counts and project paths extracted from bubbles.
+   */
+  private readGlobalComposers(): CursorComposerSummary[] {
+    const dbPath = this.globalDbPath;
+    if (!dbPath) {
+      return [];
+    }
+
+    let db: Database.Database;
+    try {
+      db = this.openDatabase(dbPath);
+    } catch {
+      return [];
+    }
+
+    try {
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cursorDiskKV'",
+        )
+        .all() as Array<{ name: string }>;
+      if (tables.length === 0) {
+        return [];
+      }
+
+      const rows = db
+        .prepare(
+          "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%' ORDER BY key",
+        )
+        .all() as Array<{ key: string; value: string }>;
+
+      const composers: CursorComposerSummary[] = [];
+      for (const row of rows) {
+        try {
+          const composerId = row.key.slice("composerData:".length);
+          const data = JSON.parse(row.value) as Record<string, unknown>;
+
+          const bubbleCount = db
+            .prepare(
+              "SELECT count(*) as c FROM cursorDiskKV WHERE key LIKE ?",
+            )
+            .get(`bubbleId:${composerId}:%`) as { c: number };
+
+          // Extract project path from first bubble
+          let projectDir: string | undefined;
+          const firstBubble = db
+            .prepare(
+              "SELECT value FROM cursorDiskKV WHERE key LIKE ? LIMIT 1",
+            )
+            .get(`bubbleId:${composerId}:%`) as
+            | { value: string }
+            | undefined;
+          if (firstBubble) {
+            try {
+              const bdata = JSON.parse(firstBubble.value) as Record<
+                string,
+                unknown
+              >;
+              if (typeof bdata.workspaceProjectDir === "string") {
+                projectDir = bdata.workspaceProjectDir;
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          composers.push({
+            id: composerId,
+            startedAt: this.normalizeTimestamp(
+              data.createdAt ?? data.startedAt,
+            ),
+            lastActiveAt: this.normalizeTimestamp(
+              data.lastUpdatedAt ?? data.lastActiveAt,
+            ),
+            messageCount: bubbleCount.c || this.normalizeNumber(data.messageCount),
+            preview:
+              (data.name as string | undefined) ||
+              (typeof data.text === "string"
+                ? data.text.substring(0, 100)
+                : undefined),
+            projectPath: projectDir,
+          });
+        } catch {
+          // Skip malformed entries
+        }
+      }
+      return composers;
+    } finally {
+      db.close();
+    }
   }
 
   private normalizeComposerEntries(payload: unknown): CursorComposerSummary[] {
@@ -610,7 +853,7 @@ export class CursorAdapter extends BaseAdapter {
 
     const role = this.mapRole(
       (obj.role as string | undefined) ||
-        (obj.type as string | undefined) ||
+        (obj.type as string | number | undefined) ||
         (obj.sender as string | undefined),
     );
     const text = this.extractText(obj);
@@ -724,11 +967,15 @@ export class CursorAdapter extends BaseAdapter {
 
   private extractText(payload: Record<string, unknown>): string {
     const directContent = payload.content;
-    if (typeof directContent === "string") {
+    if (typeof directContent === "string" && directContent.trim()) {
       return directContent.trim();
     }
-    if (typeof payload.text === "string") {
+    if (typeof payload.text === "string" && payload.text.trim()) {
       return payload.text.trim();
+    }
+    // richText fallback — used by newer Cursor global DB format
+    if (typeof payload.richText === "string" && payload.richText.trim()) {
+      return payload.richText.trim();
     }
 
     if (Array.isArray(directContent)) {
@@ -746,13 +993,14 @@ export class CursorAdapter extends BaseAdapter {
           textParts.push(block.text);
         }
       }
-      return textParts.join("\n").trim();
+      const joined = textParts.join("\n").trim();
+      if (joined) return joined;
     }
 
     const nestedMessage = payload.message;
     if (nestedMessage && typeof nestedMessage === "object") {
       const nested = nestedMessage as Record<string, unknown>;
-      if (typeof nested.content === "string") {
+      if (typeof nested.content === "string" && nested.content.trim()) {
         return nested.content.trim();
       }
       if (Array.isArray(nested.content)) {
@@ -770,14 +1018,21 @@ export class CursorAdapter extends BaseAdapter {
             parts.push(block.text);
           }
         }
-        return parts.join("\n").trim();
+        const joined = parts.join("\n").trim();
+        if (joined) return joined;
       }
     }
 
     return "";
   }
 
-  private mapRole(rawRole: string | undefined): ConversationMessage["role"] {
+  private mapRole(rawRole: string | number | undefined): ConversationMessage["role"] {
+    // Handle numeric bubble types from global cursorDiskKV format
+    if (typeof rawRole === "number") {
+      if (rawRole === 1) return "user";
+      if (rawRole === 2) return "assistant";
+      return "assistant";
+    }
     const role = (rawRole || "").toLowerCase();
     if (role === "user" || role === "assistant" || role === "system" || role === "tool") {
       return role;
@@ -882,6 +1137,7 @@ interface CursorComposerSummary {
   lastActiveAt?: string;
   messageCount?: number;
   preview?: string;
+  projectPath?: string;
 }
 
 interface ParsedCursorPayload {

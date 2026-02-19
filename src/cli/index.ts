@@ -37,7 +37,7 @@ program
   .description(
     "Capture your AI coding agent session and continue in a different agent."
   )
-  .version("0.4.5");
+  .version("0.5.0");
 
 // --- runHandoff (extracted for default command) ---
 async function runHandoff(options: {
@@ -93,6 +93,10 @@ async function runHandoff(options: {
         process.exit(1);
       }
       spinner.succeed(`Source: ${adapter.agentId}`);
+    }
+
+    if (adapter.agentId === "cursor") {
+      console.log(`  ${hint("Close Cursor and run from your project folder for best results.")}`);
     }
 
     // 2. Capture session
@@ -400,6 +404,10 @@ program
       }
       spinner.succeed(`Source: ${adapter.agentId}`);
 
+      if (adapter.agentId === "cursor") {
+        console.log(`  ${hint("Close Cursor and run from your project folder for best results.")}`);
+      }
+
       // 2. Capture session
       spinner = ora("Reading conversation history...").start();
       const session = options.session
@@ -604,7 +612,7 @@ program
   .command("info")
   .description("Show agent storage paths, context window sizes, and config")
   .action(async () => {
-    console.log(banner("0.4.5"));
+    console.log(banner("0.5.0"));
     for (const meta of Object.values(AGENT_REGISTRY)) {
       const storagePath = meta.storagePaths[process.platform] || "N/A";
       console.log(`  ${chalk.bold(meta.name)} ${chalk.dim(`(${meta.id})`)}`);
