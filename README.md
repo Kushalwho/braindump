@@ -40,6 +40,12 @@ agentrelay handoff
 # Target a specific agent for the resume format
 agentrelay handoff --target cursor
 
+# Preview without writing files
+agentrelay handoff --dry-run
+
+# Watch for rate limits (auto-detects agents)
+agentrelay watch
+
 # The resume prompt is in .handoff/RESUME.md and on your clipboard
 # Paste it into your target agent and keep working
 ```
@@ -51,6 +57,7 @@ agentrelay detect                         Scan for installed agents
 agentrelay list [--source <agent>]        List recent sessions
 agentrelay capture [--source <agent>]     Capture session to .handoff/session.json
 agentrelay handoff [options]              Full pipeline: capture -> compress -> resume
+agentrelay watch [--agents <csv>]         Watch sessions for changes and rate limits
 agentrelay resume [--file <path>]         Re-generate resume from captured session
 agentrelay info                           Show agent paths and config
 ```
@@ -63,6 +70,15 @@ agentrelay info                           Show agent paths and config
 --session <id>          Specific session ID. Default: most recent session.
 -p, --project <path>    Project path. Default: current directory.
 --tokens <n>            Token budget override. Default: based on target agent.
+--dry-run               Preview what would be captured without writing files.
+```
+
+### Watch Options
+
+```
+--agents <csv>          Comma-separated agents to watch (claude-code, cursor, codex).
+--interval <seconds>    Polling interval in seconds. Default: 30.
+-p, --project <path>    Only watch sessions for this project.
 ```
 
 ### Target-Specific Hints
@@ -130,22 +146,22 @@ src/
 │   ├── token-estimator.ts     # Character-based token estimation
 │   ├── project-context.ts     # Git info, directory tree, memory files
 │   ├── registry.ts            # Agent metadata (paths, context windows)
-│   └── watcher.ts             # File watcher (planned)
+│   └── watcher.ts             # Polling-based session watcher
 ├── providers/
 │   ├── file-provider.ts       # Writes .handoff/RESUME.md
-│   ├── clipboard-provider.ts  # Copies to system clipboard
-│   └── agent-provider.ts      # Agent-specific formatting (planned)
+│   └── clipboard-provider.ts  # Copies to system clipboard
 ├── types/index.ts             # All TypeScript interfaces
 └── cli/index.ts               # Commander.js CLI entry point
 ```
 
 ## Tests
 
-63 tests passing across 7 test files:
+70 tests passing across 8 test files:
 - Adapter tests (Claude Code, Cursor, Codex) with real JSONL/SQLite parsing
 - Compression engine tests across all priority layers
 - Conversation analyzer tests
 - Prompt builder tests including target-agent hints
+- Watcher tests with mocked adapters and fake timers
 - End-to-end handoff flow integration tests
 
 ## CI

@@ -1,140 +1,200 @@
-# AgentRelay — Kushal's Task Sheet (Round 4)
+# AgentRelay — Kushal's Task Sheet (Round 5)
 
 ## Status
 
-Rounds 1-3 are merged (PRs #2, #4, #6). All 3 adapters working, 63 tests passing. The core pipeline is complete.
+Rounds 1-4 are merged (PRs #2, #4, #6, #8). All 3 adapters + watcher working, 70 tests passing. Watch CLI fully wired (PR #9).
 
-**Round 4 goal:** Implement the `watch` command — a background watcher that monitors agent session directories for changes (new messages, rate limit signals) and can trigger automatic handoffs. This is the last major feature before v0.2.0 ships.
+**Round 5 goal:** Harden adapters with schema validation, improve Cursor edge cases, expand test coverage, and clean up dead code — all prep for npm publish.
 
-## Your Branch: `feat/watcher`
+## Your Branch: `feat/validation`
 
 ```bash
 git checkout main
 git pull origin main
 npm install
-git checkout -b feat/watcher
+git checkout -b feat/validation
 ```
 
 ---
 
 ## Context: What exists now
 
-- `src/core/watcher.ts` — Stub class with `start()`, `stop()`, `getState()` methods (all throw "Not implemented")
-- `src/types/index.ts` — Has `WatcherState` interface: `{ timestamp, agents, activeSessions }`
-- `chokidar` is already in `package.json` dependencies
-- `src/cli/index.ts` — Has stub `watch` command that prints "not implemented yet" (Prateek will wire it up after you build the core)
-- All 3 adapters have `detect()` and `listSessions()` methods you can use to discover what to watch
+- All 3 adapters are working: Claude Code (JSONL), Cursor (SQLite), Codex (JSONL)
+- Watcher is fully implemented with polling + rate-limit heuristics
+- 70 tests passing across 8 test files
+- `CapturedSession` is the core contract — adapters produce it, engine consumes it
+- There is NO runtime validation on `CapturedSession` — if an adapter produces a malformed object, it silently breaks downstream
+- `src/providers/agent-provider.ts` is a dead stub (throws "Not implemented") — never used
+- `chokidar` is in package.json but never imported anywhere (watcher uses `setInterval` polling instead)
 
 ---
 
 ## Tasks (in order)
 
-### Task 1: Design the watcher event system
+### Task 1: Add Zod schema validation for CapturedSession
 
-**File:** `src/types/index.ts`
+**Install:** `npm install zod`
 
-Add these interfaces (coordinate with Prateek — this is a shared file):
+**File:** `src/core/validation.ts` (create new)
+
+Create Zod schemas that validate the `CapturedSession` shape. This catches adapter bugs early instead of letting malformed data silently break compression/prompt-building.
 
 ```typescript
-export interface WatcherEvent {
-  type: "session-update" | "new-session" | "rate-limit" | "idle";
-  agentId: AgentId;
-  sessionId?: string;
-  timestamp: string;
-  details?: string;
+import { z } from "zod";
+
+export const ConversationMessageSchema = z.object({
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  content: z.string(),
+  toolName: z.string().optional(),
+  timestamp: z.string().optional(),
+  tokenCount: z.number().optional(),
+});
+
+export const FileChangeSchema = z.object({
+  path: z.string(),
+  changeType: z.enum(["created", "modified", "deleted"]),
+  diff: z.string().optional(),
+  language: z.string().optional(),
+});
+
+export const TaskStateSchema = z.object({
+  description: z.string(),
+  completed: z.array(z.string()),
+  remaining: z.array(z.string()),
+  inProgress: z.string().optional(),
+  blockers: z.array(z.string()),
+});
+
+export const ProjectContextSchema = z.object({
+  path: z.string(),
+  name: z.string().optional(),
+  gitBranch: z.string().optional(),
+  gitStatus: z.string().optional(),
+  gitLog: z.array(z.string()).optional(),
+  structure: z.string().optional(),
+  memoryFileContents: z.string().optional(),
+});
+
+export const CapturedSessionSchema = z.object({
+  version: z.literal("1.0"),
+  source: z.enum(["claude-code", "cursor", "codex"]),
+  capturedAt: z.string(),
+  sessionId: z.string(),
+  sessionStartedAt: z.string().optional(),
+  project: ProjectContextSchema,
+  conversation: z.object({
+    messageCount: z.number(),
+    estimatedTokens: z.number(),
+    summary: z.string().optional(),
+    messages: z.array(ConversationMessageSchema),
+  }),
+  filesChanged: z.array(FileChangeSchema),
+  decisions: z.array(z.string()),
+  blockers: z.array(z.string()),
+  task: TaskStateSchema,
+});
+
+/**
+ * Validate a CapturedSession object. Throws ZodError if invalid.
+ */
+export function validateSession(data: unknown) {
+  return CapturedSessionSchema.parse(data);
 }
 
-export interface WatcherOptions {
-  agents?: AgentId[];
-  interval?: number;       // polling interval in ms (default: 30000)
-  projectPath?: string;    // only watch sessions for this project
-  onEvent?: (event: WatcherEvent) => void;
+/**
+ * Safe validation — returns { success, data, error } without throwing.
+ */
+export function safeValidateSession(data: unknown) {
+  return CapturedSessionSchema.safeParse(data);
 }
 ```
 
-Update `WatcherState` to track more detail:
+Then add a `validate()` call in each adapter's `capture()` and `captureLatest()` methods, right before returning the session:
 
 ```typescript
-export interface WatcherState {
-  timestamp: string;
-  agents: AgentId[];
-  activeSessions: Record<string, {
-    messageCount: number;
-    lastCheckedAt: string;
-    lastChangedAt?: string;
-  }>;
-  running: boolean;
-}
+import { validateSession } from "../core/validation.js";
+
+// At the end of capture() / captureLatest():
+const session = { version: "1.0", source: "cursor", ... };
+return validateSession(session) as CapturedSession;
 ```
 
-### Task 2: Implement the watcher core
+This ensures every adapter returns valid data or throws a clear Zod error.
 
-**File:** `src/core/watcher.ts`
+### Task 2: Improve Cursor adapter workspace resolution
 
-The watcher does NOT use chokidar's file-change events directly (agent session files update unpredictably). Instead, use a **polling approach**:
+**File:** `src/adapters/cursor/adapter.ts`
 
-1. `start(options)` —
-   - Determine which agents to watch (default: all detected agents)
-   - Set up a `setInterval` that runs every `options.interval` ms (default 30s)
-   - Each tick: call `adapter.listSessions(projectPath)` for each agent
-   - Compare with previous snapshot: detect new sessions, message count changes
-   - Emit events via `options.onEvent` callback
-   - Rate limit detection: if a session's message count stops growing AND the last message was from the assistant (mid-response), emit a `"rate-limit"` event. Use a simple heuristic: if 2+ consecutive checks show the same message count, consider it potentially rate-limited.
+**Problem:** The Cursor adapter finds workspace storage by looking for `workspace.json` files. But some Cursor workspaces don't have this file, especially older ones or ones that were opened from the terminal with `cursor .`.
 
-2. `stop()` —
-   - Clear the interval
-   - Set `running = false`
-   - Update state timestamp
+**Fix:** Add a fallback strategy:
 
-3. `getState()` — Return current `WatcherState`
+1. Try the current approach (find `workspace.json` and match project path)
+2. If no match found, glob the workspace storage directories and check the hashed folder names
+3. As last resort, find the most recently modified `state.vscdb` file in any workspace folder
 
-4. `takeSnapshot()` — Public method. Capture current session counts for all watched agents and return a `WatcherState`. The polling loop calls this internally, but the CLI can also call it for a one-shot check.
+Implementation hint:
+```typescript
+// Current approach:
+// workspace.json exists → read it → match folder URI → found!
 
-Key implementation notes:
-- Use `getAdapter()` and `adapter.listSessions()` from `src/adapters/index.ts`
-- Store previous snapshot to diff against
-- Handle errors gracefully — if an adapter throws, log it and continue watching other agents
-- The watcher should be a singleton-style class (only one instance running at a time)
+// Fallback 1: Check folder hashes
+// Cursor uses a hash of the folder URI as the workspace ID
+// We can try to compute the hash of our project path and look for it
 
-### Task 3: Add rate limit detection heuristics
+// Fallback 2: Most recent state.vscdb
+// If all else fails, return the most recently modified workspace
+// This is a guess but usually correct for active projects
+```
 
-**File:** `src/core/watcher.ts`
+### Task 3: Write validation + edge case tests
 
-Simple heuristics for detecting when an agent has hit a rate limit:
+**File:** `tests/core/validation.test.ts` (create new)
 
-1. **Stale session:** Message count unchanged across 2+ polling intervals
-2. **Session growth then stop:** Session was actively growing (message count increasing), then stopped
-3. **Agent-specific signals (stretch goal):**
-   - Claude Code: Check if last JSONL entry contains rate limit keywords ("exceeded", "rate limit", "429")
-   - Cursor: Check if SQLite has a rate limit indicator
-   - Codex: Check JSONL for rate limit entries
+Tests for the Zod schemas:
 
-For now, implement heuristics 1 and 2. Emit `WatcherEvent` with `type: "rate-limit"`.
+- `should validate a correct CapturedSession` — pass a well-formed object, expect success
+- `should reject session with missing required fields` — omit `version`, `source`, `sessionId`
+- `should reject session with wrong version` — pass `version: "2.0"`, expect failure
+- `should reject invalid message role` — pass `role: "admin"`, expect failure
+- `should reject invalid changeType` — pass `changeType: "renamed"`, expect failure
+- `should accept session with all optional fields omitted` — minimal valid object
+- `should return typed data from validateSession` — verify return type matches `CapturedSession`
+- `should use safeValidateSession without throwing` — verify success/error return shape
 
-### Task 4: Write watcher tests
+**File:** `tests/adapters/cursor.test.ts` (add to existing)
 
-**File:** `tests/watcher/watcher.test.ts`
+Add edge case tests:
+- `should handle missing workspace.json gracefully` — workspace folder exists but no workspace.json
+- `should fall back to most recent state.vscdb` — multiple workspaces, no exact match
 
-Tests to write:
-- `should start watching and detect session updates` — mock adapter.listSessions to return changing message counts
-- `should detect new sessions` — second poll returns more sessions than first
-- `should emit rate-limit event when session goes stale` — message count unchanged after 2 intervals
-- `should handle adapter errors gracefully` — one adapter throws, others still work
-- `should stop watching and clear interval` — verify cleanup
-- `should only watch specified agents` — pass `agents: ["claude-code"]`, verify others not polled
-- `should filter by project path` — pass `projectPath`, verify it's forwarded to adapters
+**File:** `tests/adapters/claude-code.test.ts` (add to existing)
 
-Testing approach:
-- Mock adapters using `vi.spyOn` on `getAdapter()` from `src/adapters/index.ts`
-- Use `vi.useFakeTimers()` to control polling intervals
-- Collect events via the `onEvent` callback
-- No real file system needed — mock at the adapter layer
+Add edge case tests:
+- `should handle very large session files (1000+ messages)` — generate a large mock JSONL file
+- `should skip duplicate messages` — same message ID appearing twice in JSONL
 
-### Task 5: Export watcher from barrel files
+**File:** `tests/adapters/codex.test.ts` (add to existing)
 
-**Files:**
-- `src/core/watcher.ts` — make sure the class and types are properly exported
-- Verify `src/types/index.ts` exports the new interfaces
+Add edge case tests:
+- `should handle empty JSONL file` — 0 bytes
+- `should handle JSONL with only system entries` — no user/assistant messages
+
+### Task 4: Remove dead code and unused dependencies
+
+**Files to delete:**
+- `src/providers/agent-provider.ts` — dead stub, never used, not exported from barrel
+
+**Files to edit:**
+- `package.json` — remove `chokidar` from dependencies (it's never imported; the watcher uses `setInterval` polling)
+
+**Verify** after removing:
+```bash
+npx tsc --noEmit       # Should still compile
+npx vitest run         # Should still pass
+grep -r "chokidar" src/  # Should return nothing
+grep -r "agent-provider" src/  # Should return nothing
+```
 
 ---
 
@@ -142,40 +202,50 @@ Testing approach:
 
 | File | Action |
 |------|--------|
-| `src/types/index.ts` | **Edit** — add WatcherEvent, WatcherOptions, update WatcherState |
-| `src/core/watcher.ts` | **Rewrite** (replace stub with full implementation) |
-| `tests/watcher/watcher.test.ts` | **Create new** |
+| `src/core/validation.ts` | **Create new** — Zod schemas |
+| `src/adapters/cursor/adapter.ts` | **Edit** — add workspace resolution fallback + validate |
+| `src/adapters/claude-code/adapter.ts` | **Edit** — add validate call |
+| `src/adapters/codex/adapter.ts` | **Edit** — add validate call |
+| `tests/core/validation.test.ts` | **Create new** — schema tests |
+| `tests/adapters/cursor.test.ts` | **Edit** — add edge case tests |
+| `tests/adapters/claude-code.test.ts` | **Edit** — add edge case tests |
+| `tests/adapters/codex.test.ts` | **Edit** — add edge case tests |
+| `src/providers/agent-provider.ts` | **Delete** |
+| `package.json` | **Edit** — remove `chokidar`, add `zod` |
 
 ## Files NOT to touch
 
-- `src/cli/index.ts` — Prateek will wire the CLI after your core is done
+- `src/cli/index.ts` — Prateek owns this
 - `src/core/compression.ts` — Prateek owns this
 - `src/core/prompt-builder.ts` — Prateek owns this
-- `tests/core/*` — Prateek owns these
+- `src/providers/index.ts` — Prateek owns this (already cleaned up)
+- `README.md` — Prateek owns this
+- `tests/core/prompt-builder.test.ts` — Prateek owns this
+- `tests/core/compression.test.ts` — Prateek owns this
 - `tests/e2e/*` — Prateek owns these
 
 ---
 
-## Reference: How adapters expose session data
+## Reference: Current CapturedSession interface
 
 ```typescript
-// Get an adapter instance
-import { getAdapter } from "../adapters/index.js";
-const adapter = getAdapter("claude-code");
-
-// List sessions (returns SessionInfo[])
-const sessions = await adapter.listSessions(projectPath);
-// Each session has: id, startedAt, lastActiveAt, messageCount, projectPath, preview
-
-// Detect if agent is installed
-const detected = await adapter.detect();
+// src/types/index.ts
+export interface CapturedSession {
+  version: "1.0";
+  source: AgentId;
+  capturedAt: string;
+  sessionId: string;
+  sessionStartedAt?: string;
+  project: ProjectContext;
+  conversation: Conversation;
+  filesChanged: FileChange[];
+  decisions: string[];
+  blockers: string[];
+  task: TaskState;
+}
 ```
 
-The watcher should call `listSessions()` periodically and diff against the previous result.
-
-## Cross-platform note
-
-Your Cursor adapter tests had a bug where `APPDATA` was used to redirect paths — that only works on Windows. On Linux, the adapter uses `os.homedir() + .config/...`. I fixed this in PR #6 by mocking `os.homedir()` instead. **Follow the same pattern in watcher tests** — mock at the adapter layer, not the filesystem.
+The Zod schema must match this exactly. TypeScript types and Zod schemas should stay in sync — if someone changes the interface, the schema needs updating too.
 
 ## When You're Done
 
@@ -184,11 +254,15 @@ Your Cursor adapter tests had a bug where `APPDATA` was used to redirect paths �
 npx tsc --noEmit
 npx vitest run
 
+# Check cleanup
+grep -r "chokidar" src/     # should return nothing
+grep -r "agent-provider" src/ # should return nothing
+
 # Push
 git add -A
-git commit -m "feat: watcher core with polling and rate-limit detection"
-git push -u origin feat/watcher
-gh pr create --base main --title "feat: watcher with rate-limit detection"
+git commit -m "feat: zod validation, cursor fallback, edge case tests, cleanup"
+git push -u origin feat/validation
+gh pr create --base main --title "feat: session validation + adapter hardening + cleanup"
 ```
 
-Tell Prateek so he can review, merge, and wire up the CLI.
+Tell Prateek so he can review and merge.
