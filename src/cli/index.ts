@@ -19,7 +19,7 @@ program
   .description(
     "Capture your AI coding agent session and continue in a different agent."
   )
-  .version("0.1.0");
+  .version("0.2.0");
 
 // --- detect ---
 program
@@ -162,6 +162,7 @@ program
   .option("--session <id>", "Specific session ID")
   .option("-p, --project <path>", "Project path")
   .option("--tokens <n>", "Token budget override")
+  .option("--dry-run", "Preview what would be captured without writing files")
   .action(async (options) => {
     try {
       const projectPath = options.project || process.cwd();
@@ -220,7 +221,30 @@ program
       // 5. Build resume prompt
       const resume = buildResumePrompt(session, compressed, target);
 
-      // 6. Write to .handoff/
+      // 6. Print results
+      const budget = targetTokens || getUsableTokenBudget(target);
+      const pct = Math.round((compressed.totalTokens / budget) * 100);
+
+      if (options.dryRun) {
+        console.log();
+        console.log(chalk.yellow.bold("  Dry run — no files written"));
+        console.log();
+        console.log(`  ${chalk.dim("Source:")}     ${adapter.agentId}`);
+        console.log(`  ${chalk.dim("Session:")}    ${session.sessionId.slice(0, 12)}`);
+        console.log(`  ${chalk.dim("Branch:")}     ${session.project.gitBranch || "unknown"}`);
+        console.log(`  ${chalk.dim("Messages:")}   ${session.conversation.messageCount}`);
+        console.log(`  ${chalk.dim("Tokens:")}     ${compressed.totalTokens} / ${budget} ${chalk.dim(`(${pct}%)`)}`);
+        console.log(`  ${chalk.dim("Included:")}   ${compressed.includedLayers.join(", ")}`);
+        if (compressed.droppedLayers.length > 0) {
+          console.log(`  ${chalk.dim("Dropped:")}    ${chalk.yellow(compressed.droppedLayers.join(", "))}`);
+        }
+        console.log(`  ${chalk.dim("Target:")}     ${target}`);
+        console.log(`  ${chalk.dim("Resume:")}     ${resume.length} chars`);
+        console.log();
+        return;
+      }
+
+      // 7. Write to .handoff/
       spinner = ora("Writing handoff files...").start();
       const handoffDir = join(projectPath, ".handoff");
       mkdirSync(handoffDir, { recursive: true });
@@ -228,7 +252,7 @@ program
       writeFileSync(outputPath, resume);
       writeFileSync(join(handoffDir, "session.json"), JSON.stringify(session, null, 2));
 
-      // 7. Try clipboard copy
+      // 8. Try clipboard copy
       let clipboardOk = false;
       try {
         const { default: clipboard } = await import("clipboardy");
@@ -239,9 +263,6 @@ program
       }
       spinner.succeed(`Written to ${outputPath}`);
 
-      // 8. Print results
-      const budget = targetTokens || getUsableTokenBudget(target);
-      const pct = Math.round((compressed.totalTokens / budget) * 100);
       console.log();
       console.log(chalk.green.bold("  Handoff complete!"));
       console.log();
@@ -294,7 +315,7 @@ program
       const target = (options.target || "file") as AgentId | "clipboard" | "file";
 
       const compressed = compress(session, { targetTokens, targetAgent: target });
-      const resume = buildResumePrompt(session, compressed);
+      const resume = buildResumePrompt(session, compressed, target);
 
       const handoffDir = join(process.cwd(), ".handoff");
       mkdirSync(handoffDir, { recursive: true });
@@ -315,7 +336,7 @@ program
   .description("Show agent storage paths, context window sizes, and config")
   .action(async () => {
     const platform = process.platform as string;
-    console.log(`\n  ${chalk.bold("AgentRelay")} ${chalk.dim("v0.1.0")} ${chalk.dim(`(${platform})`)}\n`);
+    console.log(`\n  ${chalk.bold("AgentRelay")} ${chalk.dim("v0.2.0")} ${chalk.dim(`(${platform})`)}\n`);
     for (const meta of Object.values(AGENT_REGISTRY)) {
       const storagePath = meta.storagePaths[platform] || "N/A";
       console.log(`  ${chalk.bold(meta.name)} ${chalk.dim(`(${meta.id})`)}`);
