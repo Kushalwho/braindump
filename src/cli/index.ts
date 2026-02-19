@@ -19,6 +19,7 @@ import {
   formatErrorBox,
   hint,
   banner,
+  intro,
 } from "./utils.js";
 
 // --- verbose logger ---
@@ -36,7 +37,7 @@ program
   .description(
     "Capture your AI coding agent session and continue in a different agent."
   )
-  .version("0.4.1");
+  .version("0.4.2");
 
 // --- runHandoff (extracted for default command) ---
 async function runHandoff(options: {
@@ -278,7 +279,7 @@ program
         );
         process.exit(1);
       }
-      console.log(`  ${hint("Run 'braindump' to create a handoff")}`);
+      console.log(`  ${hint("Run 'braindump handoff' to create a handoff")}`);
       console.log();
     } catch (err) {
       console.log();
@@ -603,7 +604,7 @@ program
   .command("info")
   .description("Show agent storage paths, context window sizes, and config")
   .action(async () => {
-    console.log(banner("0.4.1"));
+    console.log(banner("0.4.2"));
     for (const meta of Object.values(AGENT_REGISTRY)) {
       const storagePath = meta.storagePaths[process.platform] || "N/A";
       console.log(`  ${chalk.bold(meta.name)} ${chalk.dim(`(${meta.id})`)}`);
@@ -615,31 +616,18 @@ program
     }
   });
 
-// --- default: run handoff when no subcommand given ---
+// --- default: show intro when no subcommand given ---
 const args = process.argv.slice(2);
 const subcommands = [...program.commands.map((c) => c.name()), "help"];
 const hasSubcommand = args.length > 0 && subcommands.includes(args[0]);
 const hasHelpOrVersion = args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-V");
 
 if (args.length === 0) {
-  // No args at all — run handoff as default
-  runHandoff({});
+  // No args — show intro
+  console.log(intro());
 } else if (!hasSubcommand && !hasHelpOrVersion) {
-  // Has flags but no subcommand — treat as handoff flags
-  // Parse known handoff options from args
-  const handoffCmd = new Command();
-  handoffCmd
-    .option("-s, --source <agent>")
-    .option("-t, --target <target>")
-    .option("--session <id>")
-    .option("-p, --project <path>")
-    .option("--tokens <n>")
-    .option("--dry-run")
-    .option("--no-clipboard")
-    .option("-o, --output <path>")
-    .option("-v, --verbose");
-  handoffCmd.parse(["node", "braindump", ...args]);
-  runHandoff(handoffCmd.opts());
+  // Unknown subcommand — show help
+  program.parse();
 } else {
   program.parse();
 }

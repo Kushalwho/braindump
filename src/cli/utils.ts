@@ -98,3 +98,31 @@ export function banner(version: string): string {
     "",
   ].join("\n");
 }
+
+/**
+ * Return the ASCII art intro screen shown when braindump is run with no args.
+ */
+export function intro(): string {
+  const art = chalk.cyan(`
+    __               _           __
+   / /_  _________ _(_)___  ____/ /_  ______ ___  ____
+  / __ \\/ ___/ __ \`/ / __ \\/ __  / / / / __ \`__ \\/ __ \\
+ / /_/ / /  / /_/ / / / / / /_/ / /_/ / / / / / / /_/ /
+/_.___/_/   \\__,_/_/_/ /_/\\__,_/\\__,_/_/ /_/ /_/ .___/
+                                               /_/`);
+
+  return [
+    art,
+    "",
+    `  ${chalk.dim("Capture AI agent sessions for seamless handoff.")}`,
+    "",
+    `  ${chalk.dim("-")} GitHub   ${chalk.cyan("https://github.com/Kushalwho/braindump")}`,
+    "",
+    `  ${chalk.dim("Get started:")}`,
+    `    ${chalk.bold("braindump handoff")}      Capture & generate RESUME.md`,
+    `    ${chalk.bold("braindump detect")}       Scan for installed AI agents`,
+    `    ${chalk.bold("braindump list")}         List recent sessions`,
+    `    ${chalk.bold("braindump --help")}       Show all commands`,
+    "",
+  ].join("\n");
+}
