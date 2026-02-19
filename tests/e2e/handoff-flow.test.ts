@@ -56,7 +56,7 @@ describe("E2E: Handoff Flow", () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "agentrelay-e2e-"));
+    tempDir = mkdtempSync(join(tmpdir(), "braindump-e2e-"));
   });
 
   afterEach(() => {
@@ -75,7 +75,7 @@ describe("E2E: Handoff Flow", () => {
     const resume = buildResumePrompt(session, compressed);
 
     // Verify key sections exist
-    expect(resume).toContain("# AgentRelay — Session Handoff");
+    expect(resume).toContain("# Braindump — Session Handoff");
     expect(resume).toContain("## Instructions for Resuming Agent");
     expect(resume).toContain("## Current Task");
     expect(resume).toContain("## Resume Now");
@@ -111,7 +111,7 @@ describe("E2E: Handoff Flow", () => {
     // Verify file exists and content matches
     const written = readFileSync(outputPath, "utf-8");
     expect(written).toBe(resume);
-    expect(written).toContain("# AgentRelay — Session Handoff");
+    expect(written).toContain("# Braindump — Session Handoff");
     expect(written).toContain("## Resume Now");
     expect(written.length).toBeGreaterThan(100);
   });
@@ -133,7 +133,7 @@ describe("E2E: Handoff Flow", () => {
 
     // Build resume with the compressed result — should still be valid
     const resume = buildResumePrompt(session, compressed);
-    expect(resume).toContain("# AgentRelay — Session Handoff");
+    expect(resume).toContain("# Braindump — Session Handoff");
     expect(resume).toContain("## Current Task");
   });
 
@@ -160,7 +160,7 @@ describe("E2E: Handoff Flow", () => {
     expect(compressed.includedLayers.length).toBeGreaterThan(0);
 
     const resume = buildResumePrompt(session, compressed);
-    expect(resume).toContain("# AgentRelay — Session Handoff");
+    expect(resume).toContain("# Braindump — Session Handoff");
     expect(resume).toContain("Empty task");
     expect(resume).toContain("- None yet"); // No completed items
     expect(resume).toContain("- None"); // No remaining items

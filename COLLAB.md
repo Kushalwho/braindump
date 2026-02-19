@@ -1,4 +1,4 @@
-# AgentRelay — Collaboration Guide
+# Braindump — Collaboration Guide
 
 ## Current Status (Updated Feb 19, 2026)
 
@@ -32,7 +32,7 @@
 - `--dry-run` flag for handoff preview
 - File + clipboard delivery
 - E2E integration tests
-- npm link works as global `agentrelay` command
+- npm link works as global `braindump` command
 
 ### What's next (Round 5 — Polish, Hardening & npm Publish)
 

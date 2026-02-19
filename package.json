@@ -33,11 +33,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Kushalwho/agentrelay.git"
+    "url": "https://github.com/Kushalwho/braindump.git"
   },
-  "homepage": "https://github.com/Kushalwho/agentrelay#readme",
+  "homepage": "https://github.com/Kushalwho/braindump#readme",
   "bugs": {
-    "url": "https://github.com/Kushalwho/agentrelay/issues"
+    "url": "https://github.com/Kushalwho/braindump/issues"
   },
   "publishConfig": {
     "access": "public"

@@ -48,7 +48,7 @@ describe("Prompt Builder", () => {
     const result = buildResumePrompt(mockSession, mockCompressed);
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
-    expect(result).toContain("# AgentRelay — Session Handoff");
+    expect(result).toContain("# Braindump — Session Handoff");
   });
 
   it("should include the self-summarizing instructions header", () => {

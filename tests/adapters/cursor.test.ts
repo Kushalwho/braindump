@@ -35,7 +35,7 @@ describe("CursorAdapter", () => {
 
   beforeEach(() => {
     const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, "utf-8")) as CursorFixture;
-    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentrelay-cursor-"));
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "braindump-cursor-"));
 
     vi.spyOn(os, "homedir").mockReturnValue(tmpRoot);
     // Also set APPDATA for Windows path resolution inside the adapter

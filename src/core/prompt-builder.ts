@@ -52,7 +52,7 @@ export function buildResumePrompt(
     : null;
 
   const lines: string[] = [
-    `# AgentRelay — Session Handoff`,
+    `# Braindump — Session Handoff`,
     ``,
     `> **Source:** ${session.source} | **Captured:** ${session.capturedAt}`,
     `> **Project:** ${projectName} (${session.project.path}) | Branch: \`${gitBranch}\``,

@@ -44,7 +44,7 @@ describe("ClaudeCodeAdapter", () => {
     adapter = new ClaudeCodeAdapter();
 
     // Create a unique temp directory to act as the fake home
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agentrelay-test-"));
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "braindump-test-"));
     projectsDir = path.join(tmpHome, ".claude", "projects");
     sessionDir = path.join(projectsDir, PROJECT_HASH);
     sessionFile = path.join(sessionDir, `${SESSION_ID}.jsonl`);
@@ -291,7 +291,7 @@ describe("ClaudeCodeAdapter", () => {
     it("should enrich project context from filesystem", async () => {
       const projectRoot = path.join(
         os.tmpdir(),
-        "agentrelayctx",
+        "braindumpctx",
         "workspace",
         "demoproject",
       );
@@ -323,7 +323,7 @@ describe("ClaudeCodeAdapter", () => {
       expect(session.project.structure).toContain("package.json");
       expect(session.project.memoryFileContents).toContain("Project memory note");
 
-      fs.rmSync(path.join(os.tmpdir(), "agentrelayctx"), {
+      fs.rmSync(path.join(os.tmpdir(), "braindumpctx"), {
         recursive: true,
         force: true,
       });

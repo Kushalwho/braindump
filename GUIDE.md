@@ -1,11 +1,11 @@
-# AgentRelay — Complete Usage Guide
+# Braindump — Complete Usage Guide
 
-## What AgentRelay Does
+## What Braindump Does
 
-When your AI coding agent (Claude Code, Cursor, Codex) hits a rate limit or runs out of tokens, your entire context is trapped. AgentRelay captures that context and generates a portable **RESUME.md** prompt that a new agent can read to pick up exactly where the last one stopped.
+When your AI coding agent (Claude Code, Cursor, Codex) hits a rate limit or runs out of tokens, your entire context is trapped. Braindump captures that context and generates a portable **RESUME.md** prompt that a new agent can read to pick up exactly where the last one stopped.
 
 ```
-Claude Code (rate limited) → agentrelay handoff → RESUME.md → Paste into Cursor → Continue working
+Claude Code (rate limited) → braindump handoff → RESUME.md → Paste into Cursor → Continue working
 ```
 
 ## Installation
@@ -13,36 +13,36 @@ Claude Code (rate limited) → agentrelay handoff → RESUME.md → Paste into C
 ### From Source (recommended for now)
 
 ```bash
-git clone https://github.com/Kushalwho/agentrelay.git
-cd agentrelay
+git clone https://github.com/Kushalwho/braindump.git
+cd braindump
 npm install
 npm run build
-npm link          # Makes 'agentrelay' available globally
+npm link          # Makes 'braindump' available globally
 ```
 
 ### From npm (after publish)
 
 ```bash
-npm install -g agentrelay
+npm install -g braindump
 ```
 
 ### Verify
 
 ```bash
-agentrelay --version    # Should print 0.3.0
-agentrelay detect       # Shows which agents are installed
+braindump --version    # Should print 0.3.0
+braindump detect       # Shows which agents are installed
 ```
 
 ---
 
 ## Commands Reference
 
-### 1. `agentrelay detect`
+### 1. `braindump detect`
 
 Scans your system for installed AI coding agents.
 
 ```bash
-agentrelay detect
+braindump detect
 ```
 
 **Output:**
@@ -56,17 +56,17 @@ agentrelay detect
 
 ---
 
-### 2. `agentrelay info`
+### 2. `braindump info`
 
 Shows detailed info about each supported agent.
 
 ```bash
-agentrelay info
+braindump info
 ```
 
 **Output:**
 ```
-  AgentRelay v0.3.0 (linux)
+  Braindump v0.3.0 (linux)
 
   Claude Code (claude-code)
     Storage:        ~/.claude/projects/
@@ -76,18 +76,18 @@ agentrelay info
   ...
 ```
 
-**Usable budget** = how many tokens AgentRelay targets when compressing for that agent. It's less than the full context window to leave room for the agent's own system prompt.
+**Usable budget** = how many tokens Braindump targets when compressing for that agent. It's less than the full context window to leave room for the agent's own system prompt.
 
 ---
 
-### 3. `agentrelay list`
+### 3. `braindump list`
 
 Lists recent sessions across all detected agents.
 
 ```bash
-agentrelay list                          # All agents, last 10 sessions
-agentrelay list --source claude-code     # Only Claude Code sessions
-agentrelay list --limit 5                # Show max 5 sessions
+braindump list                          # All agents, last 10 sessions
+braindump list --source claude-code     # Only Claude Code sessions
+braindump list --limit 5                # Show max 5 sessions
 ```
 
 **Output:**
@@ -101,15 +101,15 @@ Each line shows: session ID (truncated), last active timestamp, message count.
 
 ---
 
-### 4. `agentrelay capture`
+### 4. `braindump capture`
 
 Captures a session into `.handoff/session.json` without compressing or generating a resume.
 
 ```bash
-agentrelay capture                           # Auto-detect agent, latest session
-agentrelay capture --source claude-code      # Explicit agent
-agentrelay capture --session feecba38-045    # Specific session ID
-agentrelay capture --project /path/to/repo   # For a specific project
+braindump capture                           # Auto-detect agent, latest session
+braindump capture --source claude-code      # Explicit agent
+braindump capture --session feecba38-045    # Specific session ID
+braindump capture --project /path/to/repo   # For a specific project
 ```
 
 **Output files:**
@@ -119,35 +119,35 @@ agentrelay capture --project /path/to/repo   # For a specific project
 
 ---
 
-### 5. `agentrelay handoff` (the main command)
+### 5. `braindump handoff` (the main command)
 
 Full pipeline: capture → analyze → enrich → compress → generate resume → deliver.
 
 ```bash
 # Basic usage (auto-detects everything)
-agentrelay handoff
+braindump handoff
 
 # Specify source and target
-agentrelay handoff --source claude-code --target cursor
+braindump handoff --source claude-code --target cursor
 
 # Custom token budget
-agentrelay handoff --target codex --tokens 50000
+braindump handoff --target codex --tokens 50000
 
 # Preview without writing files
-agentrelay handoff --dry-run
+braindump handoff --dry-run
 
 # Skip clipboard copy
-agentrelay handoff --no-clipboard
+braindump handoff --no-clipboard
 
 # Custom output location
-agentrelay handoff --output /tmp/my-resume.md
-agentrelay handoff --output /tmp/handoff-dir/     # Writes RESUME.md inside
+braindump handoff --output /tmp/my-resume.md
+braindump handoff --output /tmp/handoff-dir/     # Writes RESUME.md inside
 
 # Debug mode
-agentrelay handoff --verbose
+braindump handoff --verbose
 
 # Combine flags
-agentrelay handoff --source claude-code --target cursor --dry-run --verbose
+braindump handoff --source claude-code --target cursor --dry-run --verbose
 ```
 
 **Output files:**
@@ -171,29 +171,29 @@ agentrelay handoff --source claude-code --target cursor --dry-run --verbose
 
 ---
 
-### 6. `agentrelay resume`
+### 6. `braindump resume`
 
 Re-generates RESUME.md from a previously captured `session.json`. Useful when you want to retarget a different agent or change the token budget.
 
 ```bash
-agentrelay resume                            # Use .handoff/session.json
-agentrelay resume --target cursor            # Retarget for Cursor
-agentrelay resume --tokens 10000             # Smaller budget
-agentrelay resume --file /path/session.json  # Custom input file
+braindump resume                            # Use .handoff/session.json
+braindump resume --target cursor            # Retarget for Cursor
+braindump resume --tokens 10000             # Smaller budget
+braindump resume --file /path/session.json  # Custom input file
 ```
 
 ---
 
-### 7. `agentrelay watch`
+### 7. `braindump watch`
 
 Monitors agent sessions in real-time. Detects new sessions, message growth, and possible rate limits.
 
 ```bash
-agentrelay watch                             # Watch all detected agents
-agentrelay watch --agents claude-code        # Watch specific agent
-agentrelay watch --agents claude-code,codex  # Watch multiple
-agentrelay watch --interval 15               # Poll every 15 seconds (default: 30)
-agentrelay watch --project /path/to/repo     # Only this project's sessions
+braindump watch                             # Watch all detected agents
+braindump watch --agents claude-code        # Watch specific agent
+braindump watch --agents claude-code,codex  # Watch multiple
+braindump watch --interval 15               # Poll every 15 seconds (default: 30)
+braindump watch --project /path/to/repo     # Only this project's sessions
 ```
 
 **Output (live):**
@@ -203,7 +203,7 @@ agentrelay watch --project /path/to/repo     # Only this project's sessions
 
   12:05:30 + claude-code feecba38-045 new session
   12:06:00 ~ claude-code feecba38-045 Message count 10 -> 15
-  12:07:00 ! claude-code feecba38-045 possible rate limit — run agentrelay handoff to switch
+  12:07:00 ! claude-code feecba38-045 possible rate limit — run braindump handoff to switch
 ```
 
 **Event types:**
@@ -224,7 +224,7 @@ Press `Ctrl+C` to stop gracefully.
 2. **Run the handoff:**
    ```bash
    cd /your/project
-   agentrelay handoff --target cursor
+   braindump handoff --target cursor
    ```
 
 3. **Output:**
@@ -247,7 +247,7 @@ Press `Ctrl+C` to stop gracefully.
 ### Scenario: Quick preview before handoff
 
 ```bash
-agentrelay handoff --dry-run --verbose
+braindump handoff --dry-run --verbose
 ```
 
 This shows you what would be captured without writing any files. Check the token count, included/dropped layers, and session details.
@@ -257,9 +257,9 @@ This shows you what would be captured without writing any files. Check the token
 ```bash
 # Terminal 1: Work normally in your agent
 # Terminal 2:
-agentrelay watch
+braindump watch
 # When it prints "possible rate limit", run:
-agentrelay handoff --target cursor
+braindump handoff --target cursor
 ```
 
 ---
@@ -281,7 +281,7 @@ The generated resume prompt contains these sections:
 
 ### Compression
 
-If the resume is too large for the target agent's context window, AgentRelay drops layers in reverse priority order:
+If the resume is too large for the target agent's context window, Braindump drops layers in reverse priority order:
 
 | Priority | Layer | Dropped first? |
 |----------|-------|----------------|
@@ -329,9 +329,9 @@ The GitHub Actions workflow (`.github/workflows/publish.yml`) will:
 ### 4. Verify
 
 ```bash
-npm view agentrelay          # Should show package info
-npm install -g agentrelay    # Test global install
-agentrelay --version         # 0.3.0
+npm view braindump          # Should show package info
+npm install -g braindump    # Test global install
+braindump --version         # 0.3.0
 ```
 
 ### For future releases

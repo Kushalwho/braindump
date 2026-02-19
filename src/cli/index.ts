@@ -402,7 +402,7 @@ program
       const filePath = options.file || join(process.cwd(), ".handoff", "session.json");
       if (!existsSync(filePath)) {
         console.error(chalk.red("File not found:"), filePath);
-        console.error(chalk.dim("Run 'agentrelay capture' first, or use --file to specify a path."));
+        console.error(chalk.dim("Run 'braindump capture' first, or use --file to specify a path."));
         process.exit(1);
       }
       console.log(chalk.dim(`Reading ${filePath}...`));
@@ -434,7 +434,7 @@ program
   .description("Show agent storage paths, context window sizes, and config")
   .action(async () => {
     const platform = process.platform as string;
-    console.log(`\n  ${chalk.bold("AgentRelay")} ${chalk.dim("v0.3.0")} ${chalk.dim(`(${platform})`)}\n`);
+    console.log(`\n  ${chalk.bold("Braindump")} ${chalk.dim("v0.3.0")} ${chalk.dim(`(${platform})`)}\n`);
     for (const meta of Object.values(AGENT_REGISTRY)) {
       const storagePath = meta.storagePaths[platform] || "N/A";
       console.log(`  ${chalk.bold(meta.name)} ${chalk.dim(`(${meta.id})`)}`);

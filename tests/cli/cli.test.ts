@@ -8,7 +8,7 @@ describe("resolveOutputPath", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "agentrelay-cli-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "braindump-cli-test-"));
   });
 
   afterEach(() => {

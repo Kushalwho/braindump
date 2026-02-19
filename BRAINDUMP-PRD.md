@@ -1,4 +1,4 @@
-# AgentRelay — Product Requirements Document
+# Braindump — Product Requirements Document
 
 ## One-Liner
 
@@ -52,16 +52,16 @@ Existing tools that touch this space:
 
 ## 2. Product Vision
 
-### What AgentRelay Is
+### What Braindump Is
 
-A developer CLI tool (`npm install -g agentrelay`) that:
+A developer CLI tool (`npm install -g braindump`) that:
 1. Reads session data from any supported agent's native storage
 2. Converts it into a universal portable format
 3. Compresses it intelligently using priority layers to fit any context window
 4. Generates a **self-summarizing resume prompt** — a prompt that, when pasted into the target agent, instructs that agent to internalize the context and immediately continue the task
 5. Delivers the prompt (clipboard, file, or opens the target agent)
 
-### What AgentRelay Is NOT
+### What Braindump Is NOT
 
 - Not a chat history viewer or backup tool
 - Not an agent orchestrator or multi-agent framework
@@ -70,7 +70,7 @@ A developer CLI tool (`npm install -g agentrelay`) that:
 
 ### Design Principles
 
-1. **Zero config to start.** `agentrelay handoff` should work with no setup on any machine that has at least one supported agent installed.
+1. **Zero config to start.** `braindump handoff` should work with no setup on any machine that has at least one supported agent installed.
 2. **The target agent does the heavy lifting.** We don't host or run a summarization model. We structure the raw context so the target agent can self-summarize as its first action (Option 2 strategy).
 3. **Graceful degradation.** If we can't read a session perfectly, output whatever we can. Partial context is infinitely better than no context.
 4. **Read-only on agent data.** We NEVER write to or modify any agent's native storage. All our output goes to `.handoff/` in the project directory.
@@ -90,9 +90,9 @@ Developer is coding in Claude Code on project /home/user/my-app
   ↓
 Rate limit hits. Terminal shows "You've exceeded your usage limit"
   ↓
-Developer runs: agentrelay handoff
+Developer runs: braindump handoff
   ↓
-AgentRelay:
+Braindump:
   1. Auto-detects that Claude Code was the most recently active agent
   2. Finds the latest session for the current project directory
   3. Reads the JSONL session file from ~/.claude/projects/
@@ -111,24 +111,24 @@ and continues exactly where Claude Code left off.
 
 ### Story 2: Proactive Watch Mode
 
-> As a developer, I want AgentRelay running in the background so that when a rate limit hits, the handoff context is already prepared.
+> As a developer, I want Braindump running in the background so that when a rate limit hits, the handoff context is already prepared.
 
 **Flow:**
 ```
-Developer runs: agentrelay watch (in a separate terminal tab)
+Developer runs: braindump watch (in a separate terminal tab)
   ↓
-AgentRelay watches ~/.claude/projects/, ~/.codex/sessions/,
+Braindump watches ~/.claude/projects/, ~/.codex/sessions/,
 and Cursor's workspaceStorage for file changes
   ↓
-When session files are modified, AgentRelay:
+When session files are modified, Braindump:
   - Tracks which sessions are active
   - Periodically snapshots the watcher state to .handoff/watcher-state.json
   - Scans the tail of session files for rate-limit error patterns
   ↓
-Rate limit detected! AgentRelay prints:
-  "⚠️  Rate limit detected in claude-code! Run 'agentrelay handoff' to switch."
+Rate limit detected! Braindump prints:
+  "⚠️  Rate limit detected in claude-code! Run 'braindump handoff' to switch."
   ↓
-Developer runs: agentrelay handoff
+Developer runs: braindump handoff
   ↓
 (Same as Story 1 from step 3 onward, but faster because the watcher
 already knows which session was active)
@@ -140,7 +140,7 @@ already knows which session was active)
 
 **Flow:**
 ```
-Developer runs: agentrelay list
+Developer runs: braindump list
   ↓
 Output:
   📂 claude-code:
@@ -152,7 +152,7 @@ Output:
      8h7j6k5l:comp-uuid  Feb 19, 1:00 PM (12 msgs)
      └─ Fixing dark mode toggle bug
   ↓
-Developer runs: agentrelay handoff --session a1b2c3d4e5f6
+Developer runs: braindump handoff --session a1b2c3d4e5f6
 ```
 
 ### Story 4: Cross-Project Handoff
@@ -161,7 +161,7 @@ Developer runs: agentrelay handoff --session a1b2c3d4e5f6
 
 **Flow:**
 ```
-agentrelay handoff --source claude-code --project /mnt/d/better --target codex
+braindump handoff --source claude-code --project /mnt/d/better --target codex
 ```
 
 ---
@@ -271,7 +271,7 @@ A background process that monitors agent session files for changes. Provides:
 ### Directory Structure
 
 ```
-agentrelay/
+braindump/
 ├── src/
 │   ├── adapters/
 │   │   ├── index.ts                 # Adapter registry + auto-detection
@@ -596,35 +596,35 @@ See Section 12 for the full prompt engineering spec.
 ### Commands
 
 ```
-agentrelay detect
+braindump detect
   Scans for installed agents.
   Output: list of detected agents with ✅/❌ status.
 
-agentrelay list [--source <agent>] [--limit <n>]
+braindump list [--source <agent>] [--limit <n>]
   Lists recent sessions across detected agents.
   Default: all agents, 10 sessions.
   Output: session ID, timestamp, message count, preview.
 
-agentrelay capture [--source <agent>] [--session <id>] [--project <path>]
+braindump capture [--source <agent>] [--session <id>] [--project <path>]
   Captures a session into .handoff/session.json.
   Auto-detects source if not specified (most recently modified session).
   Output: session stats + file path.
 
-agentrelay handoff [--source <agent>] [--target <agent|clipboard|file>] [--session <id>] [--project <path>] [--tokens <n>]
+braindump handoff [--source <agent>] [--target <agent|clipboard|file>] [--session <id>] [--project <path>] [--tokens <n>]
   Full pipeline: capture + compress + generate resume + deliver.
   This is the primary command most users will run.
   Default target: file (writes .handoff/RESUME.md) + clipboard.
 
-agentrelay watch [--agents <csv>] [--interval <seconds>]
+braindump watch [--agents <csv>] [--interval <seconds>]
   Starts background watcher. Monitors session files.
   Alerts on rate limit detection.
   Writes periodic snapshots to .handoff/watcher-state.json.
 
-agentrelay resume [--target <agent>] [--tokens <n>] [--file <path>]
+braindump resume [--target <agent>] [--tokens <n>] [--file <path>]
   Generates resume prompt from a previously captured session.json.
   Useful for re-generating with different target/token budget.
 
-agentrelay info
+braindump info
   Shows agent storage paths, context window sizes, and config.
 ```
 
@@ -858,7 +858,7 @@ Custom: --tokens flag overrides everything
 2. On file change: debounce (2 second window), then:
    - Record the file path + timestamp in activeSessions map
    - Check the tail of the file (last 5 lines) for rate-limit patterns
-3. On rate limit detection: print alert to terminal with suggestion to run `agentrelay handoff`
+3. On rate limit detection: print alert to terminal with suggestion to run `braindump handoff`
 4. Every `snapshotInterval` seconds (default 30): write watcher-state.json
 
 ### Rate Limit Detection Patterns
@@ -876,7 +876,7 @@ Custom: --tokens flag overrides everything
 
 ### Lifecycle
 
-- Start: `agentrelay watch`
+- Start: `braindump watch`
 - Runs until Ctrl+C (SIGINT) or SIGTERM
 - On shutdown: write final snapshot, close all watchers
 - Does NOT daemonize in v1 (runs in foreground)
@@ -899,7 +899,7 @@ This works because the target agent (Sonnet, GPT-5.3, etc.) is highly capable an
 ### RESUME.md Template
 
 ```markdown
-# 🔄 AgentRelay — Session Handoff
+# 🔄 Braindump — Session Handoff
 
 > **Source:** {source_agent_name} → **Captured:** {timestamp}
 > **Project:** {project_name} ({project_path}) | Branch: `{git_branch}`
@@ -1039,7 +1039,7 @@ Do not ask for confirmation. Do not summarize. Just continue building.
 
 ### .handoff/ Directory
 
-All AgentRelay output goes here. Located in the project root (same level as package.json).
+All Braindump output goes here. Located in the project root (same level as package.json).
 
 ```
 .handoff/
@@ -1054,7 +1054,7 @@ Add `.handoff/` to .gitignore. Session data may contain sensitive info (API keys
 
 ### Config File
 
-`~/.agentrelay/config.json` (global, optional):
+`~/.braindump/config.json` (global, optional):
 
 ```json
 {
@@ -1073,7 +1073,7 @@ Add `.handoff/` to .gitignore. Session data may contain sensitive info (API keys
 
 ### MVP (v0.1.0) — Ship This First
 
-**Goal:** `agentrelay handoff` works end-to-end for Claude Code → anything.
+**Goal:** `braindump handoff` works end-to-end for Claude Code → anything.
 
 Must have:
 - [x] Portable session format (types)
@@ -1106,12 +1106,12 @@ Nice to have but can skip:
 
 - [ ] Watcher mode
 - [ ] Rate limit detection
-- [ ] `agentrelay watch` command
+- [ ] `braindump watch` command
 - [ ] Snapshot management
 
 ### v0.4.0 — Polish
 
-- [ ] Config file support (~/.agentrelay/config.json)
+- [ ] Config file support (~/.braindump/config.json)
 - [ ] Test suite with fixtures
 - [ ] NPM publish
 - [ ] README with GIFs/videos
@@ -1126,19 +1126,19 @@ These are ideas for after initial traction. Do not build these for v1.
 1. **LLM-powered summarization (Optional Enhancement):**
    - Ollama local model for pre-summarization
    - API call to cheap model (Haiku, GPT-4o-mini) using user's existing API key
-   - Only as opt-in: `agentrelay handoff --summarize`
+   - Only as opt-in: `braindump handoff --summarize`
 
 2. **Memory file sync:**
    - Auto-sync CLAUDE.md ↔ AGENTS.md ↔ .cursorrules
    - Use symlinks or a canonical file with pointers
 
 3. **MCP server mode:**
-   - Expose agentrelay as an MCP tool that agents can call directly
-   - Agent could run `agentrelay_capture` as a tool before session ends
+   - Expose braindump as an MCP tool that agents can call directly
+   - Agent could run `braindump_capture` as a tool before session ends
    - This is the killer feature: the agent itself can trigger handoff
 
 4. **VS Code extension:**
-   - Cmd+Shift+P → "AgentRelay: Handoff"
+   - Cmd+Shift+P → "Braindump: Handoff"
    - Works inside Cursor since it's VS Code-based
 
 5. **Browser extension:**

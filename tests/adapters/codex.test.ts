@@ -24,7 +24,7 @@ describe("CodexAdapter", () => {
 
   beforeEach(() => {
     adapter = new CodexAdapter();
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agentrelay-codex-"));
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "braindump-codex-"));
     sessionsDir = path.join(tmpHome, ".codex", "sessions", "2026", "02", "20");
     sessionFile = path.join(sessionsDir, `${SESSION_ID}.jsonl`);
     fs.mkdirSync(sessionsDir, { recursive: true });

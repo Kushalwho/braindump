@@ -1,10 +1,10 @@
-# AgentRelay
+# Braindump
 
 A CLI tool that captures your AI coding agent session and generates a portable resume prompt so you can seamlessly continue in a different agent when tokens run out.
 
 ## The Problem
 
-AI coding agents are context silos. When your session hits a rate limit or runs out of tokens, you lose all that context. AgentRelay captures it and generates a handoff prompt so a new agent can pick up exactly where the last one left off.
+AI coding agents are context silos. When your session hits a rate limit or runs out of tokens, you lose all that context. Braindump captures it and generates a handoff prompt so a new agent can pick up exactly where the last one left off.
 
 ## Supported Agents
 
@@ -18,11 +18,11 @@ AI coding agents are context silos. When your session hits a rate limit or runs 
 
 ```bash
 # From npm
-npm install -g agentrelay
+npm install -g braindump
 
 # From source
-git clone https://github.com/Kushalwho/agentrelay.git
-cd agentrelay
+git clone https://github.com/Kushalwho/braindump.git
+cd braindump
 npm install
 npm run build
 npm link
@@ -32,19 +32,19 @@ npm link
 
 ```bash
 # Detect installed agents
-agentrelay detect
+braindump detect
 
 # Full handoff — capture, compress, generate resume prompt
-agentrelay handoff
+braindump handoff
 
 # Target a specific agent for the resume format
-agentrelay handoff --target cursor
+braindump handoff --target cursor
 
 # Preview without writing files
-agentrelay handoff --dry-run
+braindump handoff --dry-run
 
 # Watch for rate limits (auto-detects agents)
-agentrelay watch
+braindump watch
 
 # The resume prompt is in .handoff/RESUME.md and on your clipboard
 # Paste it into your target agent and keep working
@@ -53,13 +53,13 @@ agentrelay watch
 ## Commands
 
 ```
-agentrelay detect                         Scan for installed agents
-agentrelay list [--source <agent>]        List recent sessions
-agentrelay capture [--source <agent>]     Capture session to .handoff/session.json
-agentrelay handoff [options]              Full pipeline: capture -> compress -> resume
-agentrelay watch [--agents <csv>]         Watch sessions for changes and rate limits
-agentrelay resume [--file <path>]         Re-generate resume from captured session
-agentrelay info                           Show agent paths and config
+braindump detect                         Scan for installed agents
+braindump list [--source <agent>]        List recent sessions
+braindump capture [--source <agent>]     Capture session to .handoff/session.json
+braindump handoff [options]              Full pipeline: capture -> compress -> resume
+braindump watch [--agents <csv>]         Watch sessions for changes and rate limits
+braindump resume [--file <path>]         Re-generate resume from captured session
+braindump info                           Show agent paths and config
 ```
 
 ### Handoff Options
