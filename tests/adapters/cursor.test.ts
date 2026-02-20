@@ -236,6 +236,140 @@ describe("CursorAdapter", () => {
       );
     });
   });
+
+  describe("global DB (cursorDiskKV)", () => {
+    beforeEach(() => {
+      // Create global storage DB alongside workspace storage
+      const userDir = path.dirname(workspaceStorageDir);
+      const globalStorageDir = path.join(userDir, "globalStorage");
+      fs.mkdirSync(globalStorageDir, { recursive: true });
+
+      buildGlobalDb(
+        path.join(globalStorageDir, "state.vscdb"),
+        {
+          "composer-123": {
+            name: "Build Cursor adapter",
+            createdAt: "2026-02-20T10:00:00Z",
+            lastUpdatedAt: "2026-02-20T10:10:00Z",
+          },
+          "global-only-999": {
+            name: "Global only session",
+            createdAt: "2026-02-20T14:00:00Z",
+            lastUpdatedAt: "2026-02-20T14:05:00Z",
+          },
+        },
+        {
+          "bubbleId:composer-123:1": {
+            type: 1,
+            text: "Build a task API with auth.",
+            richText: "",
+            createdAt: "2026-02-20T10:00:00Z",
+            tokenCount: 15,
+            workspaceProjectDir: "/tmp/cursor-app",
+          },
+          "bubbleId:composer-123:2": {
+            type: 2,
+            text: "",
+            richText: "I'll use Fastify instead of Express for this project.",
+            createdAt: "2026-02-20T10:01:00Z",
+            tokenCount: 20,
+          },
+          "bubbleId:global-only-999:1": {
+            type: 1,
+            text: "Tell me about TypeScript generics",
+            richText: "",
+            createdAt: "2026-02-20T14:00:00Z",
+            tokenCount: 10,
+          },
+          "bubbleId:global-only-999:2": {
+            type: 2,
+            text: "",
+            richText: "TypeScript generics allow you to write reusable type-safe code.",
+            createdAt: "2026-02-20T14:01:00Z",
+            tokenCount: 50,
+          },
+        },
+      );
+    });
+
+    it("should detect via global DB even without workspace DBs", async () => {
+      fs.rmSync(workspaceStorageDir, { recursive: true, force: true });
+      fs.mkdirSync(workspaceStorageDir, { recursive: true });
+      const freshAdapter = new CursorAdapter();
+      expect(await freshAdapter.detect()).toBe(true);
+    });
+
+    it("should list global-only sessions alongside workspace sessions", async () => {
+      const freshAdapter = new CursorAdapter();
+      const sessions = await freshAdapter.listSessions();
+      expect(sessions.some((s) => s.id === "global:global-only-999")).toBe(true);
+      // composer-123 exists in workspace DB so should NOT be duplicated as global:
+      expect(sessions.some((s) => s.id === "global:composer-123")).toBe(false);
+    });
+
+    it("should capture from global DB with global: prefix", async () => {
+      const freshAdapter = new CursorAdapter();
+      const session = await freshAdapter.capture("global:global-only-999");
+      expect(session.conversation.messages.length).toBe(2);
+      expect(session.conversation.messages[0].role).toBe("user");
+      expect(session.conversation.messages[0].content).toContain("TypeScript generics");
+      expect(session.conversation.messages[1].role).toBe("assistant");
+      expect(session.conversation.messages[1].content).toContain("reusable type-safe code");
+    });
+
+    it("should fall back to global DB when workspace DB has no messages", async () => {
+      // Create a workspace with headers only (no bubbles)
+      const headersOnlyHash = "ws-headers-only";
+      const headersOnlyDir = path.join(workspaceStorageDir, headersOnlyHash);
+      fs.mkdirSync(headersOnlyDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(headersOnlyDir, "workspace.json"),
+        JSON.stringify({ folder: "file:///tmp/cursor-app" }),
+      );
+      buildWorkspaceDb(
+        path.join(headersOnlyDir, "state.vscdb"),
+        {
+          allComposers: [
+            {
+              composerId: "composer-123",
+              createdAt: "2026-02-20T10:00:00Z",
+              lastUpdatedAt: "2026-02-20T10:10:00Z",
+              messageCount: 5,
+            },
+          ],
+        },
+        {}, // No bubbles in workspace DB
+      );
+
+      const freshAdapter = new CursorAdapter();
+      const session = await freshAdapter.capture(`${headersOnlyHash}:composer-123`);
+      expect(session.conversation.messages.length).toBeGreaterThan(0);
+      expect(
+        session.conversation.messages.some((m) => m.content.includes("Fastify")),
+      ).toBe(true);
+    });
+
+    it("should parse numeric bubble types (1=user, 2=assistant)", async () => {
+      const freshAdapter = new CursorAdapter();
+      const session = await freshAdapter.capture("global:global-only-999");
+      const roles = session.conversation.messages.map((m) => m.role);
+      expect(roles).toEqual(["user", "assistant"]);
+    });
+
+    it("should extract richText for assistant messages", async () => {
+      const freshAdapter = new CursorAdapter();
+      const session = await freshAdapter.capture("global:global-only-999");
+      const assistant = session.conversation.messages.find((m) => m.role === "assistant");
+      expect(assistant).toBeDefined();
+      expect(assistant!.content).toContain("TypeScript generics");
+    });
+
+    it("should extract workspaceProjectDir from bubbles", async () => {
+      const freshAdapter = new CursorAdapter();
+      const session = await freshAdapter.capture("global:composer-123");
+      expect(session.project.path).toBe("/tmp/cursor-app");
+    });
+  });
 });
 
 interface CursorFixture {
@@ -275,6 +409,27 @@ function buildWorkspaceDb(
       }
       db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)")
         .run(key, JSON.stringify(payload));
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function buildGlobalDb(
+  dbPath: string,
+  composerEntries: Record<string, Record<string, unknown>>,
+  bubbles: Record<string, Record<string, unknown>>,
+): void {
+  const db = new Database(dbPath);
+  try {
+    db.exec("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)");
+    for (const [composerId, data] of Object.entries(composerEntries)) {
+      db.prepare("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)")
+        .run(`composerData:${composerId}`, JSON.stringify(data));
+    }
+    for (const [key, value] of Object.entries(bubbles)) {
+      db.prepare("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)")
+        .run(key, JSON.stringify(value));
     }
   } finally {
     db.close();
